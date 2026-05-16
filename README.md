@@ -68,6 +68,6 @@ Required binaries:
 # Installation on Windows 10/11
 
 ```powershell
-git clone https://github.com/NotMathew/GetMedia.git
+curl -L -o GetMedia.zip https://github.com/NotMathew/GetMedia/releases/download/v1.0/GetMedia.zip && powershell -Command "Expand-Archive -Force 'GetMedia.zip'"
 cd GetMedia
 GetMedia.bat
