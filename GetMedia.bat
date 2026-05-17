@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
-title GetMedia v2.3
+title GetMedia v1.1
 
 :: =====================================================
-::  GetMedia v2.3  |  Powered by yt-dlp + ffmpeg
+::  GetMedia v1.1  |  Powered by yt-dlp + ffmpeg
 :: =====================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -228,7 +228,7 @@ goto POST_DOWNLOAD_PROMPT
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                   GetMedia  v2.1                     ^|
+echo  ^|                   GetMedia  v1.1                     ^|
 echo  ^|             Powered by yt-dlp + ffmpeg               ^|
 echo  +------------------------------------------------------+
 echo.
