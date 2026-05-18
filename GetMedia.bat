@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
-title GetMedia v1.1
+title GetMedia v1.2
 
 :: =====================================================
-::  GetMedia v1.1  |  Powered by yt-dlp + ffmpeg
+::  GetMedia v1.2  |  Powered by yt-dlp + ffmpeg
 :: =====================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -15,11 +15,9 @@ set "URL_TEMP=%TEMP%\getmedia_urls.txt"
 
 :: ----- Default settings (changeable in Settings menu) -----
 set "CFG_SPEED="
-set "CFG_FRAGMENTS=1"
+set "CFG_FRAGMENTS=3"
 set "CFG_RETRIES=10"
 set "CFG_SKIP_EXISTING=no"
-set "CFG_PLAYLIST=single"
-set "CFG_PLAYLIST_LABEL=Single item only"
 set "CFG_METADATA=yes"
 set "CFG_THUMBNAIL=yes"
 set "CFG_SPONSORBLOCK=no"
@@ -29,9 +27,13 @@ set "CFG_PREVIEW=yes"
 set "CFG_SLEEP="
 set "CFG_CHAPTERS=yes"
 set "CFG_HISTORY=no"
+set "CFG_ARCHIVE=no"
+set "CFG_ALWAYS_SUBFOLDER=ask"
+set "CFG_COOKIES_FILE="
+set "_PRESERVE_URLS=0"
 
 :: Common yt-dlp flags applied to every download
-set "COMMON_OPTS=--windows-filenames --console-title --mtime --no-warnings --retry-sleep linear=1::5"
+set "COMMON_OPTS=--windows-filenames --console-title --mtime --no-warnings --fragment-retries infinite --file-access-retries 5 --throttled-rate 100K --retry-sleep linear=1::5 --retry-sleep fragment:exp=1:20"
 
 :: ============== Tool Validation (ffmpeg + yt-dlp) ==============
 call :CHECK_TOOLS
@@ -43,7 +45,7 @@ goto MAIN_MENU
 
 
 :: =====================================================
-:: HELPER: CHECK_TOOLS - validates ffmpeg + yt-dlp
+:: HELPER: CHECK_TOOLS
 :: =====================================================
 :CHECK_TOOLS
 if not exist "%YTDLP%" (
@@ -82,8 +84,7 @@ exit /b 0
 
 
 :: =====================================================
-:: HELPER: VALIDATE_URL - sets _url_valid = yes/no
-:: input: _url
+:: HELPER: VALIDATE_URL
 :: =====================================================
 :VALIDATE_URL
 set "_url_valid=no"
@@ -94,7 +95,120 @@ exit /b 0
 
 
 :: =====================================================
-:: HELPER: SHOW_VERSIONS - displays yt-dlp + ffmpeg versions
+:: HELPER: DELETE_URL_PROMPT
+:: =====================================================
+:DELETE_URL_PROMPT
+:_DUP_ASK
+set "_del_num="
+set /p "_del_num=  Enter number to delete (or B to cancel): "
+if /i "!_del_num!"=="B" exit /b 0
+if "!_del_num!"=="" (
+    echo   [^^!] Invalid input. Enter a number or B to cancel.
+    goto _DUP_ASK
+)
+set "_nondigit="
+for /f "delims=0123456789" %%c in ("!_del_num!") do set "_nondigit=%%c"
+if defined _nondigit (
+    echo   [^^!] Invalid input. Enter a number or B to cancel.
+    goto _DUP_ASK
+)
+call :DELETE_URL !_del_num!
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: CHECK_DUPE_URL
+:: =====================================================
+:CHECK_DUPE_URL
+set "_url_dupe=no"
+if not exist "%URL_TEMP%" exit /b 0
+findstr /x /i /c:"!_url!" "%URL_TEMP%" >nul 2>&1
+if not errorlevel 1 set "_url_dupe=yes"
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: LIST_URLS
+:: =====================================================
+:LIST_URLS
+if not exist "%URL_TEMP%" (
+    echo.
+    echo   [ Queue is empty ]
+    exit /b 0
+)
+echo.
+echo   +--------------------------------------------------+
+echo   ^|  URL Queue                                       ^|
+echo   +--------------------------------------------------+
+set "_line=0"
+for /f "usebackq tokens=* delims=" %%U in ("%URL_TEMP%") do (
+    set /a _line+=1
+    echo    !_line!. %%U
+)
+echo   +--------------------------------------------------+
+echo    Total: !_line! URL(s^)
+echo   +--------------------------------------------------+
+echo.
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: DELETE_URL
+:: =====================================================
+:DELETE_URL
+set "_del_num=%~1"
+if not exist "%URL_TEMP%" goto :eof
+set "_total=0"
+for /f "usebackq tokens=*" %%a in ("%URL_TEMP%") do set /a _total+=1
+if !_del_num! lss 1 goto :eof
+if !_del_num! gtr !_total! (
+    echo   [^^!] Number out of range (1-!_total!^)
+    exit /b 1
+)
+set "_newfile=%TEMP%\getmedia_urls_new.txt"
+set "_cur=0"
+(for /f "usebackq tokens=* delims=" %%U in ("%URL_TEMP%") do (
+    set /a _cur+=1
+    if not !_cur! == !_del_num! echo(%%U
+)) > "!_newfile!"
+if exist "!_newfile!" (
+    move /y "!_newfile!" "%URL_TEMP%" >nul
+    set /a URL_COUNT-=1
+    echo   URL #!_del_num! deleted. !URL_COUNT! URL(s^) remain...
+    echo.
+) else (
+    echo   [^^!] Failed to delete.
+)
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: CLEAR_URLS
+:: =====================================================
+:CLEAR_URLS
+echo.
+:_CLEAR_ASK
+set "_confirm="
+set /p "_confirm=  Clear ALL URLs from queue? (y/n) [n]: "
+if "!_confirm!"=="" set "_confirm=N"
+if /i "!_confirm!"=="Y" goto _CLEAR_DO
+if /i "!_confirm!"=="N" (
+    echo   Canceled...
+    echo.
+    exit /b 0
+)
+echo   [^^!] Invalid input. Please enter Y or N.
+goto _CLEAR_ASK
+:_CLEAR_DO
+if exist "%URL_TEMP%" del "%URL_TEMP%"
+set "URL_COUNT=0"
+echo   All URLs cleared...
+echo.
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: SHOW_VERSIONS
 :: =====================================================
 :SHOW_VERSIONS
 cls
@@ -114,8 +228,7 @@ exit /b 0
 
 
 :: =====================================================
-:: HELPER: PREVIEW_URLS - fetches title/duration/uploader/size
-:: Prints a numbered preview for every URL in %URL_TEMP%
+:: HELPER: PREVIEW_URLS
 :: =====================================================
 :PREVIEW_URLS
 if /i not "!CFG_PREVIEW!"=="yes" exit /b 0
@@ -137,9 +250,7 @@ exit /b 0
 
 
 :: =====================================================
-:: HELPER: BUILD_DL_OPTS - builds shared yt-dlp option flags
-:: Sets: SPEED_OPT, SKIP_OPT, META_OPT, CHAP_OPT, THUMB_OPT,
-::       SB_OPT, COOKIE_OPT, SLEEP_OPT, HISTORY_OPT
+:: HELPER: BUILD_DL_OPTS
 :: =====================================================
 :BUILD_DL_OPTS
 set "SPEED_OPT="
@@ -155,21 +266,22 @@ if /i "!CFG_THUMBNAIL!"=="yes" set "THUMB_OPT=--embed-thumbnail"
 set "SB_OPT="
 if /i "!CFG_SPONSORBLOCK!"=="yes" set "SB_OPT=--sponsorblock-remove default"
 set "COOKIE_OPT="
-if not "!CFG_COOKIES!"=="none" set "COOKIE_OPT=--cookies-from-browser !CFG_COOKIES!"
+if not "!CFG_COOKIES_FILE!"=="" (
+    if exist "!CFG_COOKIES_FILE!" set COOKIE_OPT=--cookies "!CFG_COOKIES_FILE!"
+) else (
+    if not "!CFG_COOKIES!"=="none" set "COOKIE_OPT=--cookies-from-browser !CFG_COOKIES!"
+)
 set "SLEEP_OPT="
 if not "!CFG_SLEEP!"=="" set "SLEEP_OPT=--sleep-interval !CFG_SLEEP! --max-sleep-interval !CFG_SLEEP!"
 set "HISTORY_OPT="
-:: --print-to-file fires after_move (only for completed files), writes one line per item
-:: Separator is " - " to avoid escaping pipe; %%(...) is the yt-dlp template syntax
-:: upload_date gives YYYYMMDD format (we avoid the >%%Y-%%m-%%d formatter to dodge CMD redirect parsing)
 if /i "!CFG_HISTORY!"=="yes" set HISTORY_OPT=--print-to-file "after_move:%%(upload_date)s - %%(title)s - %%(webpage_url)s" "!OUTPUT_PATH!\_history.txt"
+set "ARCHIVE_OPT="
+if /i "!CFG_ARCHIVE!"=="yes" set ARCHIVE_OPT=--download-archive "!OUTPUT_PATH!\_archive.txt" --break-on-existing
 exit /b 0
 
 
 :: =====================================================
-:: HELPER: POST_DOWNLOAD - shown after every download
-:: Inputs: _DONE_STATUS (OK/FAIL), _DONE_MODE, _DONE_PATH,
-::         _DONE_COUNT, _DONE_EXTRA (optional)
+:: HELPER: POST_DOWNLOAD
 :: =====================================================
 :POST_DOWNLOAD
 cls
@@ -206,7 +318,7 @@ echo  ------------------------------------------------------
 
 :POST_DOWNLOAD_PROMPT
 set "POST_CHOICE="
-set /p "POST_CHOICE=  Choose [Y/N/O]: "
+set /p "POST_CHOICE=  Choose [y/n/o]: "
 if "!POST_CHOICE!"=="" set "POST_CHOICE=Y"
 if /i "!POST_CHOICE!"=="O" (
     if exist "!_DONE_PATH!" (
@@ -228,26 +340,29 @@ goto POST_DOWNLOAD_PROMPT
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                   GetMedia  v1.1                     ^|
+echo  ^|                   GetMedia  v1.2                     ^|
 echo  ^|             Powered by yt-dlp + ffmpeg               ^|
 echo  +------------------------------------------------------+
 echo.
+echo   --- SINGLE VIDEO ---
 echo   [1]  Download Video
 echo   [2]  Download Audio Only
 echo   [3]  Download Video + Audio  (Separate Files)
-echo   [4]  Playlist behavior
+echo.
+echo   --- BATCH ---
+echo   [4]  Download Playlist  (Video / Audio / Both)
+echo.
 echo   [5]  Settings
 echo   [X]  Exit
-echo.
-echo   Current playlist mode: !CFG_PLAYLIST_LABEL!
 echo  ------------------------------------------------------
 set "MAIN_CHOICE="
 set /p "MAIN_CHOICE=  Choose an option: "
 
+set "_DL_MODE=single"
 if "!MAIN_CHOICE!"=="1" goto DV_URL
 if "!MAIN_CHOICE!"=="2" goto DA_URL
 if "!MAIN_CHOICE!"=="3" goto DS_URL
-if "!MAIN_CHOICE!"=="4" goto PLAYLIST_SETTINGS
+if "!MAIN_CHOICE!"=="4" goto PLAYLIST_MENU
 if "!MAIN_CHOICE!"=="5" goto SETTINGS
 if /i "!MAIN_CHOICE!"=="X" goto EXIT
 if /i "!MAIN_CHOICE!"=="Q" goto EXIT
@@ -258,34 +373,35 @@ goto MAIN_MENU
 
 
 :: =====================================================
-:PLAYLIST_SETTINGS
+:PLAYLIST_MENU
 :: =====================================================
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                  PLAYLIST BEHAVIOR                   ^|
+echo  ^|                 PLAYLIST DOWNLOAD                    ^|
 echo  +------------------------------------------------------+
 echo.
-echo   Current: !CFG_PLAYLIST_LABEL!
+echo   Each playlist URL will expand into ALL its items.
+echo   Broken or unavailable items will be skipped automatically.
 echo.
-echo   [1]  Download only the single item  (default)
-echo   [2]  Download all playlist items
+echo   What do you want from each item?
+echo.
+echo   [1]  Video             (merged video+audio file)
+echo   [2]  Audio Only        (extract audio track)
+echo   [3]  Video + Audio     (separate streams - advanced)
 echo   [B]  Back to Main Menu
+echo  ------------------------------------------------------
+set "PLDL_CHOICE="
+set /p "PLDL_CHOICE=  Choose a format: "
+if /i "!PLDL_CHOICE!"=="B" goto MAIN_MENU
+set "_DL_MODE=playlist"
+if "!PLDL_CHOICE!"=="1" goto DV_URL
+if "!PLDL_CHOICE!"=="2" goto DA_URL
+if "!PLDL_CHOICE!"=="3" goto DS_URL
 echo.
-set "PL_CHOICE="
-set /p "PL_CHOICE=  Choose playlist handling [1-2, default=1]: "
-if /i "!PL_CHOICE!"=="B" goto MAIN_MENU
-if /i "!PL_CHOICE!"=="2" (
-    set "CFG_PLAYLIST=all"
-    set "CFG_PLAYLIST_LABEL=Download all"
-) else (
-    set "CFG_PLAYLIST=single"
-    set "CFG_PLAYLIST_LABEL=Single item only"
-)
-echo.
-echo   Playlist behavior set to: !CFG_PLAYLIST_LABEL!
-timeout /t 2 >nul
-goto MAIN_MENU
+echo   [^^!] Invalid option. Try again.
+timeout /t 1 >nul
+goto PLAYLIST_MENU
 
 
 :: #####################################################
@@ -295,23 +411,58 @@ goto MAIN_MENU
 :DV_URL
 cls
 echo.
+if /i "!_DL_MODE!"=="playlist" (
 echo  +------------------------------------------------------+
-echo  ^|                  VIDEO DOWNLOAD                      ^|
-echo  ^|              [Step 1/6]  URL Input                   ^|
+echo  ^|              VIDEO PLAYLIST DOWNLOAD                 ^|
+echo  ^|  Step 1/6  ^|  URL Input  ^|  Mode: Playlist           ^|
 echo  +------------------------------------------------------+
+) else (
+echo  +------------------------------------------------------+
+echo  ^|                   VIDEO DOWNLOAD                     ^|
+echo  ^|  Step 1/6  ^|  URL Input  ^|  Mode: Single video       ^|
+echo  +------------------------------------------------------+
+)
 echo.
-echo   Enter URLs one by one. Press Enter with no input when done.
-echo   Type B to go back to Main Menu.
-echo.
+echo   Enter URLs one by one, then press Enter with no input to proceed.
+echo   L = List queue    D = Delete a URL    C = Clear all    B = Back
 echo  ------------------------------------------------------
+echo.
 
-if exist "%URL_TEMP%" del "%URL_TEMP%"
-set "URL_COUNT=0"
+if "!_PRESERVE_URLS!"=="0" (
+    if exist "%URL_TEMP%" del "%URL_TEMP%"
+    set "URL_COUNT=0"
+) else (
+    set "URL_COUNT=0"
+    if exist "%URL_TEMP%" (
+        for /f "usebackq tokens=*" %%a in ("%URL_TEMP%") do set /a URL_COUNT+=1
+    )
+    echo   [Preserving !URL_COUNT! existing URL(s^)]
+    echo.
+)
+set "_PRESERVE_URLS=0"
 
 :DV_URL_LOOP
 set "NEXT_URL="
-set /p "NEXT_URL=  URL !URL_COUNT! ^> "
+set /a "_url_n=URL_COUNT + 1"
+set /p "NEXT_URL=  URL !_url_n! (or L=List, D=Delete, C=Clear, B=Back) ^> "
 if /i "!NEXT_URL!"=="B" goto MAIN_MENU
+if /i "!NEXT_URL!"=="L" (
+    call :LIST_URLS
+    goto DV_URL_LOOP
+)
+if /i "!NEXT_URL!"=="D" (
+    call :LIST_URLS
+    if exist "%URL_TEMP%" (
+        call :DELETE_URL_PROMPT
+    ) else (
+        echo   [ Queue is empty - nothing to delete. ]
+    )
+    goto DV_URL_LOOP
+)
+if /i "!NEXT_URL!"=="C" (
+    call :CLEAR_URLS
+    goto DV_URL_LOOP
+)
 if "!NEXT_URL!"=="" (
     if !URL_COUNT!==0 (
         echo   [^^!] No URLs entered. Returning to menu...
@@ -326,6 +477,11 @@ if /i not "!_url_valid!"=="yes" (
     echo   [^^!] Invalid URL - must start with http:// or https://
     goto DV_URL_LOOP
 )
+call :CHECK_DUPE_URL
+if /i "!_url_dupe!"=="yes" (
+    echo   [^^!] Duplicate - this URL is already in the queue. Skipped.
+    goto DV_URL_LOOP
+)
 echo !NEXT_URL!>> "%URL_TEMP%"
 set /a URL_COUNT+=1
 echo   [+] Added. Total: !URL_COUNT! URL(s^)
@@ -333,6 +489,7 @@ goto DV_URL_LOOP
 
 
 :DV_RES
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|              [Step 2/6]  Resolution                  ^|
@@ -351,24 +508,29 @@ set "RESOLUTION="
 set "FORMAT_STR="
 set "RES_CHOICE="
 set /p "RES_CHOICE=  Choose resolution [1-7, default=1]: "
-if /i "!RES_CHOICE!"=="B" goto DV_URL
+if /i "!RES_CHOICE!"=="B" (
+    set "_PRESERVE_URLS=1"
+    goto DV_URL
+)
 if "!RES_CHOICE!"==""  set "RES_CHOICE=1"
-if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "FORMAT_STR=bestvideo+bestaudio/best")
-if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "FORMAT_STR=bestvideo[height<=2160]+bestaudio/best")
-if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "FORMAT_STR=bestvideo[height<=1440]+bestaudio/best")
-if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "FORMAT_STR=bestvideo[height<=1080]+bestaudio/best")
-if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "FORMAT_STR=bestvideo[height<=720]+bestaudio/best")
-if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "FORMAT_STR=bestvideo[height<=480]+bestaudio/best")
-if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "FORMAT_STR=bestvideo[height<=360]+bestaudio/best")
+if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "FORMAT_STR=bv*+ba/b")
+if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "FORMAT_STR=bv*[height<=2160]+ba/b[height<=2160]")
+if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "FORMAT_STR=bv*[height<=1440]+ba/b[height<=1440]")
+if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "FORMAT_STR=bv*[height<=1080]+ba/b[height<=1080]")
+if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "FORMAT_STR=bv*[height<=720]+ba/b[height<=720]")
+if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "FORMAT_STR=bv*[height<=480]+ba/b[height<=480]")
+if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "FORMAT_STR=bv*[height<=360]+ba/b[height<=360]")
 if "!RESOLUTION!"=="" (
     echo   [^^!] Invalid choice. Defaulting to Best Available.
     set "RESOLUTION=Best Available"
-    set "FORMAT_STR=bestvideo+bestaudio/best"
+    set "FORMAT_STR=bv*+ba/b"
     timeout /t 1 >nul
+    goto DV_RES
 )
 
 
 :DV_FMT
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|             [Step 3/6]  Output Format                ^|
@@ -407,10 +569,15 @@ if "!FMT_CHOICE!"=="7" (
         set "RESOLUTION=Custom: !CUSTOM_FMT!"
     )
 )
-if "!VID_FORMAT!"=="" set "VID_FORMAT=mp4"
+if "!VID_FORMAT!"=="" (
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DV_FMT
+)
 
 
 :DV_SUBS
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|              [Step 4/6]  Subtitles                   ^|
@@ -426,20 +593,24 @@ set "SUB_CHOICE="
 set /p "SUB_CHOICE=  Choose subtitle option [1-2, default=1]: "
 if /i "!SUB_CHOICE!"=="B" goto DV_FMT
 if "!SUB_CHOICE!"=="" set "SUB_CHOICE=1"
+if "!SUB_CHOICE!"=="1" goto DV_OUT
 if "!SUB_CHOICE!"=="2" (
     echo.
     echo   Language codes: en  id  ja  es  ko  zh  etc.
     set "SUB_LANG_IN="
     set /p "SUB_LANG_IN=  Subtitle language [default=en]: "
     if "!SUB_LANG_IN!"=="" set "SUB_LANG_IN=en"
-    :: --sub-langs <code> gets only that exact variant (avoids en + en-orig duplicates)
-    :: --convert-subs srt converts json3/vtt to proper SRT
     set "SUB_OPTS=--write-auto-subs --sub-langs !SUB_LANG_IN! --convert-subs srt"
     set "SUB_LABEL=Auto-generated [!SUB_LANG_IN!]"
+    goto DV_OUT
 )
+echo   [^^!] Invalid choice. Please try again.
+timeout /t 1 >nul
+goto DV_SUBS
 
 
 :DV_OUT
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|             [Step 5/6]  Output Path                  ^|
@@ -466,20 +637,26 @@ if "!CUSTOM_PATH!"=="" (
 )
 
 set "CREATE_SUBFOLDER="
-echo.
-set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (Y/n) [Y]: "
+if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
+    set "CREATE_SUBFOLDER=y"
+) else if /i "!CFG_ALWAYS_SUBFOLDER!"=="no" (
+    set "CREATE_SUBFOLDER=n"
+) else (
+    echo.
+    set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (y/n) [y]: "
+)
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
     set "SUBFOLDER="
-    if "!CFG_PLAYLIST!"=="all" (
+    if /i "!_DL_MODE!"=="playlist" (
         set "SUBFOLDER=Video_Playlist"
     ) else (
         set "SUBFOLDER=Video"
     )
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER!"
     if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-    echo   Subfolder created: !SUBFOLDER!
+    echo   Subfolder: !SUBFOLDER!
 )
 
 
@@ -487,12 +664,12 @@ if /i "!CREATE_SUBFOLDER!"=="n" (
 ::  DV_SUMMARY - [Step 6/6]
 :: =====================================================
 :DV_SUMMARY
-if "!CFG_PLAYLIST!"=="single" (
+if /i "!_DL_MODE!"=="playlist" (
+    set "PL_OPTS=--ignore-errors"
+    set "PL_LABEL=Playlist - download all, skip broken"
+) else (
     set "PL_OPTS=--no-playlist"
     set "PL_LABEL=Single video only"
-) else (
-    set "PL_OPTS="
-    set "PL_LABEL=Download all"
 )
 cls
 echo.
@@ -509,6 +686,7 @@ echo   Output      : !OUTPUT_PATH!
 echo   Metadata    : !CFG_METADATA!    Thumbnail: !CFG_THUMBNAIL!
 echo   SponsorBlock: !CFG_SPONSORBLOCK!
 echo   Cookies     : !CFG_COOKIES_LABEL!
+echo   Archive     : !CFG_ARCHIVE!    History log: !CFG_HISTORY!
 if not "!CFG_SPEED!"=="" echo   Speed       : !CFG_SPEED! limit
 echo   Fragments   : !CFG_FRAGMENTS! concurrent
 
@@ -518,7 +696,7 @@ echo  ------------------------------------------------------
 echo   [Y]  Start Download   [N]  Cancel   [B]  Back to Edit Options
 echo  ------------------------------------------------------
 set "CONFIRM="
-set /p "CONFIRM=  Choose [Y/N/B] (default=Y): "
+set /p "CONFIRM=  Choose [y/n/b] (default=y): "
 if "!CONFIRM!"=="" set "CONFIRM=Y"
 if /i "!CONFIRM!"=="B" goto DV_OUT
 if /i not "!CONFIRM!"=="Y" goto MAIN_MENU
@@ -532,7 +710,7 @@ echo.
 
 call :BUILD_DL_OPTS
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title)s.%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -550,23 +728,58 @@ goto POST_DOWNLOAD
 :DA_URL
 cls
 echo.
+if /i "!_DL_MODE!"=="playlist" (
+echo  +------------------------------------------------------+
+echo  ^|              AUDIO PLAYLIST DOWNLOAD                 ^|
+echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Playlist           ^|
+echo  +------------------------------------------------------+
+) else (
 echo  +------------------------------------------------------+
 echo  ^|                 AUDIO ONLY DOWNLOAD                  ^|
-echo  ^|              [Step 1/5]  URL Input                   ^|
+echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Single track       ^|
 echo  +------------------------------------------------------+
+)
 echo.
-echo   Enter URLs one by one. Press Enter with no input when done.
-echo   Type B to go back to Main Menu.
-echo.
+echo   Enter URLs one by one, then press Enter with no input to proceed.
+echo   L = List queue    D = Delete a URL    C = Clear all    B = Back
 echo  ------------------------------------------------------
+echo.
 
-if exist "%URL_TEMP%" del "%URL_TEMP%"
-set "URL_COUNT=0"
+if "!_PRESERVE_URLS!"=="0" (
+    if exist "%URL_TEMP%" del "%URL_TEMP%"
+    set "URL_COUNT=0"
+) else (
+    set "URL_COUNT=0"
+    if exist "%URL_TEMP%" (
+        for /f "usebackq tokens=*" %%a in ("%URL_TEMP%") do set /a URL_COUNT+=1
+    )
+    echo   [Preserving !URL_COUNT! existing URL(s^)]
+    echo.
+)
+set "_PRESERVE_URLS=0"
 
 :DA_URL_LOOP
 set "NEXT_URL="
-set /p "NEXT_URL=  URL !URL_COUNT! ^> "
+set /a "_url_n=URL_COUNT + 1"
+set /p "NEXT_URL=  URL !_url_n! (or L=List, D=Delete, C=Clear, B=Back) ^> "
 if /i "!NEXT_URL!"=="B" goto MAIN_MENU
+if /i "!NEXT_URL!"=="L" (
+    call :LIST_URLS
+    goto DA_URL_LOOP
+)
+if /i "!NEXT_URL!"=="D" (
+    call :LIST_URLS
+    if exist "%URL_TEMP%" (
+        call :DELETE_URL_PROMPT
+    ) else (
+        echo   [ Queue is empty - nothing to delete. ]
+    )
+    goto DA_URL_LOOP
+)
+if /i "!NEXT_URL!"=="C" (
+    call :CLEAR_URLS
+    goto DA_URL_LOOP
+)
 if "!NEXT_URL!"=="" (
     if !URL_COUNT!==0 (
         echo   [^^!] No URLs entered. Returning to menu...
@@ -581,6 +794,11 @@ if /i not "!_url_valid!"=="yes" (
     echo   [^^!] Invalid URL - must start with http:// or https://
     goto DA_URL_LOOP
 )
+call :CHECK_DUPE_URL
+if /i "!_url_dupe!"=="yes" (
+    echo   [^^!] Duplicate - this URL is already in the queue. Skipped.
+    goto DA_URL_LOOP
+)
 echo !NEXT_URL!>> "%URL_TEMP%"
 set /a URL_COUNT+=1
 echo   [+] Added. Total: !URL_COUNT! URL(s^)
@@ -588,6 +806,7 @@ goto DA_URL_LOOP
 
 
 :DA_FMT
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|             [Step 2/5]  Audio Format                 ^|
@@ -606,7 +825,10 @@ echo.
 set "AUD_FORMAT="
 set "AUD_CHOICE="
 set /p "AUD_CHOICE=  Choose format [1-8, default=1]: "
-if /i "!AUD_CHOICE!"=="B" goto DA_URL
+if /i "!AUD_CHOICE!"=="B" (
+    set "_PRESERVE_URLS=1"
+    goto DA_URL
+)
 if "!AUD_CHOICE!"=="" set "AUD_CHOICE=1"
 if "!AUD_CHOICE!"=="1" set "AUD_FORMAT=mp3"
 if "!AUD_CHOICE!"=="2" set "AUD_FORMAT=aac"
@@ -616,10 +838,15 @@ if "!AUD_CHOICE!"=="5" set "AUD_FORMAT=opus"
 if "!AUD_CHOICE!"=="6" set "AUD_FORMAT=wav"
 if "!AUD_CHOICE!"=="7" set "AUD_FORMAT=alac"
 if "!AUD_CHOICE!"=="8" set "AUD_FORMAT=vorbis"
-if "!AUD_FORMAT!"=="" set "AUD_FORMAT=mp3"
+if "!AUD_FORMAT!"=="" (
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DA_FMT
+)
 
 
 :DA_QUAL
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|             [Step 3/5]  Audio Quality                ^|
@@ -648,10 +875,15 @@ if "!QUAL_CHOICE!"=="5" set "AUD_QUALITY=320K"
 if "!QUAL_CHOICE!"=="6" set "AUD_QUALITY=256K"
 if "!QUAL_CHOICE!"=="7" set "AUD_QUALITY=192K"
 if "!QUAL_CHOICE!"=="8" set "AUD_QUALITY=128K"
-if "!AUD_QUALITY!"=="" set "AUD_QUALITY=0"
+if "!AUD_QUALITY!"=="" (
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DA_QUAL
+)
 
 
 :DA_OUT
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|             [Step 4/5]  Output Path                  ^|
@@ -678,25 +910,31 @@ if "!CUSTOM_PATH!"=="" (
 )
 
 set "CREATE_SUBFOLDER="
-echo.
-set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (Y/n) [Y]: "
+if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
+    set "CREATE_SUBFOLDER=y"
+) else if /i "!CFG_ALWAYS_SUBFOLDER!"=="no" (
+    set "CREATE_SUBFOLDER=n"
+) else (
+    echo.
+    set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (y/n) [y]: "
+)
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
     set "SUBFOLDER=Audio"
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER!"
     if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-    echo   Subfolder created: !SUBFOLDER!
+    echo   Subfolder: !SUBFOLDER!
 )
 
 
 :DA_SUMMARY
-if "!CFG_PLAYLIST!"=="single" (
+if /i "!_DL_MODE!"=="playlist" (
+    set "PL_OPTS=--ignore-errors"
+    set "PL_LABEL=Playlist - download all, skip broken"
+) else (
     set "PL_OPTS=--no-playlist"
     set "PL_LABEL=Single track only"
-) else (
-    set "PL_OPTS="
-    set "PL_LABEL=Download all"
 )
 cls
 echo.
@@ -711,6 +949,7 @@ echo   Playlist    : !PL_LABEL!
 echo   Output      : !OUTPUT_PATH!
 echo   Metadata    : !CFG_METADATA!    Thumbnail: !CFG_THUMBNAIL!
 echo   Cookies     : !CFG_COOKIES_LABEL!
+echo   Archive     : !CFG_ARCHIVE!    History log: !CFG_HISTORY!
 if not "!CFG_SPEED!"=="" echo   Speed       : !CFG_SPEED! limit
 
 call :PREVIEW_URLS
@@ -719,7 +958,7 @@ echo  ------------------------------------------------------
 echo   [Y]  Start Download   [N]  Cancel   [B]  Back to Edit Options
 echo  ------------------------------------------------------
 set "CONFIRM="
-set /p "CONFIRM=  Choose [Y/N/B] (default=Y): "
+set /p "CONFIRM=  Choose [y/n/b] (default=y): "
 if "!CONFIRM!"=="" set "CONFIRM=Y"
 if /i "!CONFIRM!"=="B" goto DA_OUT
 if /i not "!CONFIRM!"=="Y" goto MAIN_MENU
@@ -733,7 +972,7 @@ echo.
 
 call :BUILD_DL_OPTS
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title)s.%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -751,23 +990,58 @@ goto POST_DOWNLOAD
 :DS_URL
 cls
 echo.
+if /i "!_DL_MODE!"=="playlist" (
+echo  +------------------------------------------------------+
+echo  ^|       VIDEO + AUDIO PLAYLIST  (Separate Files^)      ^|
+echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Playlist           ^|
+echo  +------------------------------------------------------+
+) else (
 echo  +------------------------------------------------------+
 echo  ^|          SEPARATE VIDEO + AUDIO DOWNLOAD             ^|
-echo  ^|              [Step 1/5]  URL Input                   ^|
+echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Single video       ^|
 echo  +------------------------------------------------------+
+)
 echo.
-echo   Enter URLs one by one. Press Enter with no input when done.
-echo   Type B to go back to Main Menu.
-echo.
+echo   Enter URLs one by one, then press Enter with no input to proceed.
+echo   L = List queue    D = Delete a URL    C = Clear all    B = Back
 echo  ------------------------------------------------------
+echo.
 
-if exist "%URL_TEMP%" del "%URL_TEMP%"
-set "URL_COUNT=0"
+if "!_PRESERVE_URLS!"=="0" (
+    if exist "%URL_TEMP%" del "%URL_TEMP%"
+    set "URL_COUNT=0"
+) else (
+    set "URL_COUNT=0"
+    if exist "%URL_TEMP%" (
+        for /f "usebackq tokens=*" %%a in ("%URL_TEMP%") do set /a URL_COUNT+=1
+    )
+    echo   [Preserving !URL_COUNT! existing URL(s^)]
+    echo.
+)
+set "_PRESERVE_URLS=0"
 
 :DS_URL_LOOP
 set "NEXT_URL="
-set /p "NEXT_URL=  URL !URL_COUNT! ^> "
+set /a "_url_n=URL_COUNT + 1"
+set /p "NEXT_URL=  URL !_url_n! (or L=List, D=Delete, C=Clear, B=Back) ^> "
 if /i "!NEXT_URL!"=="B" goto MAIN_MENU
+if /i "!NEXT_URL!"=="L" (
+    call :LIST_URLS
+    goto DS_URL_LOOP
+)
+if /i "!NEXT_URL!"=="D" (
+    call :LIST_URLS
+    if exist "%URL_TEMP%" (
+        call :DELETE_URL_PROMPT
+    ) else (
+        echo   [ Queue is empty - nothing to delete. ]
+    )
+    goto DS_URL_LOOP
+)
+if /i "!NEXT_URL!"=="C" (
+    call :CLEAR_URLS
+    goto DS_URL_LOOP
+)
 if "!NEXT_URL!"=="" (
     if !URL_COUNT!==0 (
         echo   [^^!] No URLs entered. Returning to menu...
@@ -782,6 +1056,11 @@ if /i not "!_url_valid!"=="yes" (
     echo   [^^!] Invalid URL - must start with http:// or https://
     goto DS_URL_LOOP
 )
+call :CHECK_DUPE_URL
+if /i "!_url_dupe!"=="yes" (
+    echo   [^^!] Duplicate - this URL is already in the queue. Skipped.
+    goto DS_URL_LOOP
+)
 echo !NEXT_URL!>> "%URL_TEMP%"
 set /a URL_COUNT+=1
 echo   [+] Added. Total: !URL_COUNT! URL(s^)
@@ -789,6 +1068,7 @@ goto DS_URL_LOOP
 
 
 :DS_RES
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|           [Step 2/5]  Video Resolution               ^|
@@ -807,22 +1087,27 @@ set "RESOLUTION="
 set "VID_FORMAT_STR="
 set "RES_CHOICE="
 set /p "RES_CHOICE=  Choose resolution [1-7, default=1]: "
-if /i "!RES_CHOICE!"=="B" goto DS_URL
+if /i "!RES_CHOICE!"=="B" (
+    set "_PRESERVE_URLS=1"
+    goto DS_URL
+)
 if "!RES_CHOICE!"=="" set "RES_CHOICE=1"
-if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "VID_FORMAT_STR=bestvideo")
-if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "VID_FORMAT_STR=bestvideo[height<=2160]")
-if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "VID_FORMAT_STR=bestvideo[height<=1440]")
-if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "VID_FORMAT_STR=bestvideo[height<=1080]")
-if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "VID_FORMAT_STR=bestvideo[height<=720]")
-if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "VID_FORMAT_STR=bestvideo[height<=480]")
-if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "VID_FORMAT_STR=bestvideo[height<=360]")
+if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "VID_FORMAT_STR=bv")
+if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "VID_FORMAT_STR=bv[height<=2160]")
+if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "VID_FORMAT_STR=bv[height<=1440]")
+if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "VID_FORMAT_STR=bv[height<=1080]")
+if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "VID_FORMAT_STR=bv[height<=720]")
+if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "VID_FORMAT_STR=bv[height<=480]")
+if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "VID_FORMAT_STR=bv[height<=360]")
 if "!RESOLUTION!"=="" (
-    set "RESOLUTION=Best Available"
-    set "VID_FORMAT_STR=bestvideo"
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DS_RES
 )
 
 
 :DS_AUD_FMT
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|        [Step 3/5]  Audio Format (separate file)      ^|
@@ -851,10 +1136,15 @@ if "!AUD_CHOICE!"=="5" set "AUD_FORMAT=opus"
 if "!AUD_CHOICE!"=="6" set "AUD_FORMAT=wav"
 if "!AUD_CHOICE!"=="7" set "AUD_FORMAT=alac"
 if "!AUD_CHOICE!"=="8" set "AUD_FORMAT=vorbis"
-if "!AUD_FORMAT!"=="" set "AUD_FORMAT=mp3"
+if "!AUD_FORMAT!"=="" (
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DS_AUD_FMT
+)
 
 
 :DS_OUT
+cls
 echo.
 echo  +------------------------------------------------------+
 echo  ^|             [Step 4/5]  Output Path                  ^|
@@ -881,19 +1171,32 @@ if "!CUSTOM_PATH!"=="" (
 )
 
 set "CREATE_SUBFOLDER="
-echo.
-set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (Y/n) [Y]: "
+if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
+    set "CREATE_SUBFOLDER=y"
+) else if /i "!CFG_ALWAYS_SUBFOLDER!"=="no" (
+    set "CREATE_SUBFOLDER=n"
+) else (
+    echo.
+    set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (y/n) [y]: "
+)
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
     set "SUBFOLDER=Video+Audio"
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER!"
     if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-    echo   Subfolder created: !SUBFOLDER!
+    echo   Subfolder: !SUBFOLDER!
 )
 
 
 :DS_SUMMARY
+if /i "!_DL_MODE!"=="playlist" (
+    set "PL_OPTS=--ignore-errors"
+    set "PL_LABEL=Playlist - download all, skip broken"
+) else (
+    set "PL_OPTS=--no-playlist"
+    set "PL_LABEL=Single video only"
+)
 cls
 echo.
 echo  +------------------------------------------------------+
@@ -903,11 +1206,16 @@ echo.
 echo   URLs          : !URL_COUNT! URL(s^) queued
 echo   Video Quality : !RESOLUTION!
 echo   Audio Format  : !AUD_FORMAT!
+echo   Playlist      : !PL_LABEL!
 echo   Output        : !OUTPUT_PATH!
 echo   Metadata      : !CFG_METADATA!    Thumbnail: !CFG_THUMBNAIL!
 echo   Cookies       : !CFG_COOKIES_LABEL!
+echo   Archive       : !CFG_ARCHIVE!    History log: !CFG_HISTORY!
 echo.
 echo   NOTE: Video and audio will be saved as SEPARATE files.
+echo   TIP:  The standard Video Download mode auto-merges them
+echo         into one file - use that unless you specifically
+echo         want raw separate streams.
 
 call :PREVIEW_URLS
 
@@ -915,7 +1223,7 @@ echo  ------------------------------------------------------
 echo   [Y]  Start Download   [N]  Cancel   [B]  Back to Edit Options
 echo  ------------------------------------------------------
 set "CONFIRM="
-set /p "CONFIRM=  Choose [Y/N/B] (default=Y): "
+set /p "CONFIRM=  Choose [y/n/b] (default=y): "
 if "!CONFIRM!"=="" set "CONFIRM=Y"
 if /i "!CONFIRM!"=="B" goto DS_OUT
 if /i not "!CONFIRM!"=="Y" goto MAIN_MENU
@@ -929,7 +1237,7 @@ echo.
 
 call :BUILD_DL_OPTS
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title)s [VIDEO].%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [VIDEO].%%(ext)s"
 
 set "_DS_VID_RC=!ERRORLEVEL!"
 if !_DS_VID_RC! NEQ 0 (
@@ -947,7 +1255,7 @@ echo  ^|                 DOWNLOADING AUDIO...                 ^|
 echo  +------------------------------------------------------+
 echo.
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title)s [AUDIO].%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [AUDIO].%%(ext)s"
 
 set "_DS_AUD_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -976,14 +1284,16 @@ if "!CFG_SPEED!"=="" (
 echo   Concurrent DL   : !CFG_FRAGMENTS! fragment(s^)
 echo   Retries         : !CFG_RETRIES!
 echo   Skip existing   : !CFG_SKIP_EXISTING!
-echo   Playlist        : !CFG_PLAYLIST_LABEL!
 echo   Embed metadata  : !CFG_METADATA!
 echo   Embed chapters  : !CFG_CHAPTERS!
 echo   Embed thumbnail : !CFG_THUMBNAIL!
 echo   SponsorBlock    : !CFG_SPONSORBLOCK!
 echo   Cookies         : !CFG_COOKIES_LABEL!
+if not "!CFG_COOKIES_FILE!"=="" echo   Cookies file    : !CFG_COOKIES_FILE!
 echo   Info preview    : !CFG_PREVIEW!
+echo   Always subfolder: !CFG_ALWAYS_SUBFOLDER!
 echo   Download history: !CFG_HISTORY!
+echo   Download archive: !CFG_ARCHIVE!
 if "!CFG_SLEEP!"=="" (
     echo   Sleep interval  : None
 ) else (
@@ -1001,18 +1311,19 @@ echo   [7]  Toggle metadata embedding
 echo   [8]  Toggle chapter embedding
 echo   [9]  Toggle thumbnail embedding
 echo   [10] Toggle SponsorBlock removal
-echo   [11] Cookie browser integration
+echo   [11] Cookie integration  (browser or cookies.txt file)
 echo   [12] Toggle info preview
 echo   [13] Set sleep interval  (anti-ban throttle)
 echo   [14] Update yt-dlp  (self-updater)
 echo   [15] Show tool versions
 echo   [16] Toggle download history log  (writes _history.txt)
+echo   [17] Toggle download archive  (skip already-downloaded videos)
+echo   [18] Set subfolder mode  (ask/yes/no)
 echo   [B]  Back to Main Menu
 echo.
 set "SET_CHOICE="
 set /p "SET_CHOICE=  Choose an option: "
 
-:: Check B first to guarantee it always works
 if /i "!SET_CHOICE!"=="B" goto MAIN_MENU
 if "!SET_CHOICE!"=="1"  goto SET_PATH
 if "!SET_CHOICE!"=="2"  goto SET_EXPLORER
@@ -1030,6 +1341,8 @@ if "!SET_CHOICE!"=="13" goto SET_SLEEP
 if "!SET_CHOICE!"=="14" goto SET_UPDATE
 if "!SET_CHOICE!"=="15" goto SET_VERSIONS
 if "!SET_CHOICE!"=="16" goto SET_TOGGLE_HISTORY
+if "!SET_CHOICE!"=="17" goto SET_TOGGLE_ARCHIVE
+if "!SET_CHOICE!"=="18" goto SET_SUBFOLDER_MODE
 goto SETTINGS
 
 
@@ -1126,6 +1439,35 @@ if /i "!CFG_HISTORY!"=="yes" echo   ^(will write _history.txt in each download f
 timeout /t 2 >nul
 goto SETTINGS
 
+:SET_TOGGLE_ARCHIVE
+if /i "!CFG_ARCHIVE!"=="yes" (set "CFG_ARCHIVE=no") else (set "CFG_ARCHIVE=yes")
+echo   Download archive: !CFG_ARCHIVE!
+if /i "!CFG_ARCHIVE!"=="yes" (
+    echo   ^(will write _archive.txt and skip already-downloaded videos^)
+    echo   ^(delete the file in the output folder to reset^)
+)
+timeout /t 3 >nul
+goto SETTINGS
+
+:SET_SUBFOLDER_MODE
+echo.
+echo   Subfolder mode controls whether downloads go into a typed
+echo   subfolder (Video/Audio/Video+Audio) or directly to base path.
+echo.
+echo   [1]  Ask each time   (default)
+echo   [2]  Always create   (skip prompt, always make subfolder)
+echo   [3]  Never create    (skip prompt, save to base path)
+echo.
+set "SF_CHOICE="
+set /p "SF_CHOICE=  Choose [1-3, default=1]: "
+if "!SF_CHOICE!"=="" set "SF_CHOICE=1"
+if "!SF_CHOICE!"=="1" set "CFG_ALWAYS_SUBFOLDER=ask"
+if "!SF_CHOICE!"=="2" set "CFG_ALWAYS_SUBFOLDER=yes"
+if "!SF_CHOICE!"=="3" set "CFG_ALWAYS_SUBFOLDER=no"
+echo   Subfolder mode set to: !CFG_ALWAYS_SUBFOLDER!
+timeout /t 2 >nul
+goto SETTINGS
+
 :SET_SLEEP
 echo.
 echo   Sleep interval throttles requests between downloads to avoid bans.
@@ -1164,14 +1506,20 @@ goto SETTINGS
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|              COOKIE BROWSER INTEGRATION              ^|
+echo  ^|                COOKIE INTEGRATION                    ^|
 echo  +------------------------------------------------------+
 echo.
-echo   Current: !CFG_COOKIES_LABEL!
+if not "!CFG_COOKIES_FILE!"=="" (
+    echo   Current: cookies.txt file
+    echo            !CFG_COOKIES_FILE!
+) else (
+    echo   Current: !CFG_COOKIES_LABEL!
+)
 echo.
-echo   Use cookies from a browser to access age-restricted,
-echo   members-only, or login-required content.
+echo   Use cookies to access age-restricted, members-only, or
+echo   login-required content.
 echo.
+echo   --- BROWSER COOKIES ---
 echo   [1]  None  (no cookies)
 echo   [2]  Chrome
 echo   [3]  Firefox
@@ -1181,24 +1529,86 @@ echo   [6]  Opera
 echo   [7]  Safari
 echo   [8]  Chromium
 echo   [9]  Vivaldi
+echo.
+echo   --- COOKIE FILE (more reliable than browser cookies) ---
+echo   [10] Use cookies.txt file path
+echo   [11] Clear cookies.txt file path
+echo.
 echo   [B]  Back to Settings
 echo.
 set "CK_CHOICE="
-set /p "CK_CHOICE=  Choose browser [1-9, default=1]: "
+set /p "CK_CHOICE=  Choose option [default=1]: "
 if /i "!CK_CHOICE!"=="B" goto SETTINGS
 if "!CK_CHOICE!"=="" set "CK_CHOICE=1"
-if "!CK_CHOICE!"=="1" (set "CFG_COOKIES=none"     & set "CFG_COOKIES_LABEL=No cookies")
-if "!CK_CHOICE!"=="2" (set "CFG_COOKIES=chrome"   & set "CFG_COOKIES_LABEL=Chrome")
-if "!CK_CHOICE!"=="3" (set "CFG_COOKIES=firefox"  & set "CFG_COOKIES_LABEL=Firefox")
-if "!CK_CHOICE!"=="4" (set "CFG_COOKIES=edge"     & set "CFG_COOKIES_LABEL=Edge")
-if "!CK_CHOICE!"=="5" (set "CFG_COOKIES=brave"    & set "CFG_COOKIES_LABEL=Brave")
-if "!CK_CHOICE!"=="6" (set "CFG_COOKIES=opera"    & set "CFG_COOKIES_LABEL=Opera")
-if "!CK_CHOICE!"=="7" (set "CFG_COOKIES=safari"   & set "CFG_COOKIES_LABEL=Safari")
-if "!CK_CHOICE!"=="8" (set "CFG_COOKIES=chromium" & set "CFG_COOKIES_LABEL=Chromium")
-if "!CK_CHOICE!"=="9" (set "CFG_COOKIES=vivaldi"  & set "CFG_COOKIES_LABEL=Vivaldi")
+if "!CK_CHOICE!"=="10" goto COOKIE_FILE_SET
+if "!CK_CHOICE!"=="11" (
+    set "CFG_COOKIES_FILE="
+    echo   Cookies file cleared. Will use browser source: !CFG_COOKIES_LABEL!
+    timeout /t 2 >nul
+    goto SETTINGS
+)
+set "_was_browser=no"
+if "!CK_CHOICE!"=="1" (set "CFG_COOKIES=none"     & set "CFG_COOKIES_LABEL=No cookies"  & set "_was_browser=yes")
+if "!CK_CHOICE!"=="2" (set "CFG_COOKIES=chrome"   & set "CFG_COOKIES_LABEL=Chrome"      & set "_was_browser=yes")
+if "!CK_CHOICE!"=="3" (set "CFG_COOKIES=firefox"  & set "CFG_COOKIES_LABEL=Firefox"     & set "_was_browser=yes")
+if "!CK_CHOICE!"=="4" (set "CFG_COOKIES=edge"     & set "CFG_COOKIES_LABEL=Edge"        & set "_was_browser=yes")
+if "!CK_CHOICE!"=="5" (set "CFG_COOKIES=brave"    & set "CFG_COOKIES_LABEL=Brave"       & set "_was_browser=yes")
+if "!CK_CHOICE!"=="6" (set "CFG_COOKIES=opera"    & set "CFG_COOKIES_LABEL=Opera"       & set "_was_browser=yes")
+if "!CK_CHOICE!"=="7" (set "CFG_COOKIES=safari"   & set "CFG_COOKIES_LABEL=Safari"      & set "_was_browser=yes")
+if "!CK_CHOICE!"=="8" (set "CFG_COOKIES=chromium" & set "CFG_COOKIES_LABEL=Chromium"    & set "_was_browser=yes")
+if "!CK_CHOICE!"=="9" (set "CFG_COOKIES=vivaldi"  & set "CFG_COOKIES_LABEL=Vivaldi"     & set "_was_browser=yes")
+if /i "!_was_browser!"=="yes" (
+    set "CFG_COOKIES_FILE="
+    if not "!CK_CHOICE!"=="1" (
+        echo.
+        echo  +------------------------------------------------------+
+        echo  ^|                    [!] WARNING                       ^|
+        echo  +------------------------------------------------------+
+        echo   Using browser cookies will pass YOUR LOGGED-IN session
+        echo   to yt-dlp. Only use this for URLs you trust. A malicious
+        echo   site URL could expose your account.
+        echo.
+        echo   Close the browser before downloading if you hit cookie
+        echo   database lock errors (especially on Chrome/Edge/Brave).
+        echo  ------------------------------------------------------
+        pause
+    )
+    echo.
+    echo   Cookies source: !CFG_COOKIES_LABEL!
+    timeout /t 2 >nul
+)
+goto SETTINGS
+
+
+:COOKIE_FILE_SET
 echo.
-echo   Cookies source: !CFG_COOKIES_LABEL!
-timeout /t 2 >nul
+echo   How to export cookies.txt:
+echo     1. Install browser extension "Get cookies.txt LOCALLY"
+echo     2. Open the target site, log in
+echo     3. Click the extension - Export as Netscape format
+echo     4. Save as cookies.txt
+echo.
+echo   Type the full path to the cookies.txt file, or B to cancel:
+set "NEW_COOKIE_FILE="
+set /p "NEW_COOKIE_FILE=  Path: "
+if /i "!NEW_COOKIE_FILE!"=="B" goto COOKIE_MENU
+if "!NEW_COOKIE_FILE!"=="" goto COOKIE_MENU
+if not exist "!NEW_COOKIE_FILE!" (
+    echo   [^^!] File not found. No changes made.
+    timeout /t 3 >nul
+    goto COOKIE_MENU
+)
+set "CFG_COOKIES_FILE=!NEW_COOKIE_FILE!"
+echo.
+echo  +------------------------------------------------------+
+echo  ^|                    [!] WARNING                       ^|
+echo  +------------------------------------------------------+
+echo   This file contains your logged-in session. Anyone with
+echo   read access can impersonate you on those sites. Keep it
+echo   in a private folder.
+echo  ------------------------------------------------------
+echo   Cookies file set: !CFG_COOKIES_FILE!
+pause
 goto SETTINGS
 
 
