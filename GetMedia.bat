@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
-title GetMedia v2.6
+title GetMedia v1.3
 
 :: =====================================================
-::  GetMedia v2.6  |  Powered by yt-dlp + ffmpeg
+::  GetMedia v1.3  |  Powered by yt-dlp + ffmpeg
 :: =====================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -12,6 +12,9 @@ set "YTDLP=%BIN%\yt-dlp.exe"
 set "FFMPEG=%BIN%\ffmpeg.exe"
 set "DEFAULT_OUTPUT=%SCRIPT_DIR%Output"
 set "URL_TEMP=%TEMP%\getmedia_urls.txt"
+set "FAILED_TEMP=%TEMP%\getmedia_failed.txt"
+set "COMPLETED_TEMP=%TEMP%\getmedia_completed.txt"
+set "ATTEMPTED_TEMP=%TEMP%\getmedia_attempted.txt"
 
 :: ----- Default settings (changeable in Settings menu) -----
 set "CFG_SPEED="
@@ -277,6 +280,113 @@ set "HISTORY_OPT="
 if /i "!CFG_HISTORY!"=="yes" set HISTORY_OPT=--print-to-file "after_move:%%(upload_date)s - %%(title)s - %%(webpage_url)s" "!OUTPUT_PATH!\_history.txt"
 set "ARCHIVE_OPT="
 if /i "!CFG_ARCHIVE!"=="yes" set ARCHIVE_OPT=--download-archive "!OUTPUT_PATH!\_archive.txt" --break-on-existing
+:: TRACK_OPT records each individual video yt-dlp processes:
+::   before_dl  - fires for every item it attempts (expanded from playlists too)
+::   after_move - fires only when the item completed cleanly
+:: COMPLETED_TEMP minus ATTEMPTED_TEMP would be wrong (the other direction).
+:: We compute failures as ATTEMPTED minus COMPLETED in playlist mode, or
+:: URL_TEMP minus COMPLETED in single mode (handled in COLLECT_FAILED_URLS).
+set TRACK_OPT=--print-to-file "before_dl:%%(webpage_url)s" "%ATTEMPTED_TEMP%" --print-to-file "after_move:%%(webpage_url)s" "%COMPLETED_TEMP%"
+exit /b 0
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: COLLECT_FAILED_URLS
+::   Computes failed = SOURCE minus COMPLETED, where SOURCE is:
+::     - URL_TEMP        in single mode (user-typed URLs)
+::     - ATTEMPTED_TEMP  in playlist mode (yt-dlp-expanded items)
+::   Using URL_TEMP for playlists is wrong because the queue
+::   holds 1 playlist URL while COMPLETED holds N video URLs -
+::   no match, false-positive "failure" with no items listed.
+::   Uses yt-dlp's own success signal (after_move hook), not
+::   log scraping. Strips ?query and #fragment before comparing
+::   because yt-dlp normalizes webpage_url differently from the
+::   URLs we pass in.
+:: =====================================================
+:COLLECT_FAILED_URLS
+if exist "%FAILED_TEMP%" del "%FAILED_TEMP%"
+
+set "_source_file=%URL_TEMP%"
+if /i "!_DL_MODE!"=="playlist" set "_source_file=%ATTEMPTED_TEMP%"
+if not exist "!_source_file!" exit /b 0
+
+set "_completed_exists=no"
+if exist "%COMPLETED_TEMP%" set "_completed_exists=yes"
+
+for /f "usebackq tokens=* delims=" %%U in ("!_source_file!") do (
+    set "_q_url=%%U"
+    call :_STRIP_QUERY _q_url _q_stripped
+    set "_was_completed=no"
+    if /i "!_completed_exists!"=="yes" (
+        for /f "usebackq tokens=* delims=" %%C in ("%COMPLETED_TEMP%") do (
+            set "_c_url=%%C"
+            call :_STRIP_QUERY _c_url _c_stripped
+            if /i "!_q_stripped!"=="!_c_stripped!" set "_was_completed=yes"
+        )
+    )
+    if /i "!_was_completed!"=="no" (
+        :: Skip if already in FAILED_TEMP (playlist may list same URL twice)
+        set "_already_failed=no"
+        if exist "%FAILED_TEMP%" (
+            findstr /x /i /c:"%%U" "%FAILED_TEMP%" >nul 2>&1
+            if not errorlevel 1 set "_already_failed=yes"
+        )
+        if /i "!_already_failed!"=="no" echo %%U>> "%FAILED_TEMP%"
+    )
+)
+exit /b 0
+
+
+:: Internal: strip ?... and #... from a URL for comparison.
+:: Args: %1 = input var name, %2 = output var name.
+:_STRIP_QUERY
+set "_sq=!%~1!"
+for /f "tokens=1 delims=?#" %%X in ("!_sq!") do set "_sq=%%X"
+set "%~2=!_sq!"
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: SHOW_FAILED_INFO
+::   Displays info for each URL in FAILED_TEMP.
+::   For each failed URL, probes yt-dlp for basic info
+::   (title/uploader/duration) so the user can identify
+::   which video failed. If even the info probe fails,
+::   we report likely reasons.
+:: =====================================================
+:SHOW_FAILED_INFO
+if not exist "%FAILED_TEMP%" exit /b 0
+set "_fc=0"
+for /f "usebackq tokens=*" %%a in ("%FAILED_TEMP%") do set /a _fc+=1
+if !_fc!==0 exit /b 0
+
+echo.
+echo  +------------------------------------------------------+
+echo  ^|              FAILED / UNAVAILABLE MEDIA              ^|
+echo  +------------------------------------------------------+
+echo.
+echo   !_fc! item(s^) failed to download:
+echo.
+
+set "_cookie_opt_f="
+if not "!CFG_COOKIES_FILE!"=="" (
+    if exist "!CFG_COOKIES_FILE!" set "_cookie_opt_f=--cookies !CFG_COOKIES_FILE!"
+) else (
+    if not "!CFG_COOKIES!"=="none" set "_cookie_opt_f=--cookies-from-browser !CFG_COOKIES!"
+)
+
+set "_fi=0"
+for /f "usebackq tokens=* delims=" %%U in ("%FAILED_TEMP%") do (
+    set /a _fi+=1
+    echo   [!_fi!] %%U
+    "%YTDLP%" --no-warnings --skip-download --ignore-no-formats-error !_cookie_opt_f! --print "       Title    : %%(title)s" --print "       Uploader : %%(uploader)s" --print "       Duration : %%(duration_string)s" -I 1:1 "%%U" 2>nul
+    if errorlevel 1 (
+        echo       ^(Could not retrieve info - item may be private, deleted,^)
+        echo       ^(age-restricted, region-locked, or the URL is invalid.^)
+    )
+    echo.
+)
 exit /b 0
 
 
@@ -297,20 +407,53 @@ if /i "!_DONE_STATUS!"=="OK" (
     echo  ^|                  DOWNLOAD FAILED                     ^|
     echo  +------------------------------------------------------+
     echo.
-    echo   Status      : [!] Failed or interrupted
+    echo   Status      : [^^!] Failed or interrupted
 )
-echo   URLs queued : !_DONE_COUNT! URL(s^)
+:: Count attempted and completed for an accurate summary
+set "_attempted_count=0"
+set "_completed_count=0"
+if exist "%ATTEMPTED_TEMP%" (
+    for /f "usebackq tokens=*" %%a in ("%ATTEMPTED_TEMP%") do set /a _attempted_count+=1
+)
+if exist "%COMPLETED_TEMP%" (
+    for /f "usebackq tokens=*" %%a in ("%COMPLETED_TEMP%") do set /a _completed_count+=1
+)
+if /i "!_DL_MODE!"=="playlist" (
+    echo   URLs queued : !_DONE_COUNT! playlist URL(s^)
+    echo   Items found : !_attempted_count!  ^|  Completed: !_completed_count!
+) else (
+    echo   URLs queued : !_DONE_COUNT! URL(s^)
+)
 echo   Mode        : !_DONE_MODE!
 echo   Saved to    : !_DONE_PATH!
 if defined _DONE_EXTRA echo   Note        : !_DONE_EXTRA!
 echo.
+
+:: Reset the retry-available flag, then re-check failures
+set "_RETRY_AVAILABLE=no"
+
 if /i not "!_DONE_STATUS!"=="OK" (
-    echo   Common causes: invalid URL, network issue, age-restricted
-    echo   content, missing cookies, or outdated yt-dlp
-    echo   ^(Settings -^> Update yt-dlp^).
-    echo.
+    call :COLLECT_FAILED_URLS
+    set "_failed_count=0"
+    if exist "%FAILED_TEMP%" (
+        for /f "usebackq tokens=*" %%a in ("%FAILED_TEMP%") do set /a _failed_count+=1
+    )
+    if !_failed_count! GTR 0 (
+        echo   Detected !_failed_count! failed item(s^) in this batch.
+        set "_RETRY_AVAILABLE=yes"
+        call :SHOW_FAILED_INFO
+    ) else (
+        echo   Common causes: invalid URL, network issue, age-restricted
+        echo   content, missing cookies, or outdated yt-dlp
+        echo   ^(Settings -^> Update yt-dlp^).
+        echo.
+    )
 )
+
 echo  ------------------------------------------------------
+if /i "!_RETRY_AVAILABLE!"=="yes" (
+    echo   [R]  Retry failed item(s^) only
+)
 echo   [Y]  Return to Main Menu  (default)
 echo   [N]  Exit GetMedia
 echo   [O]  Open output folder
@@ -318,8 +461,14 @@ echo  ------------------------------------------------------
 
 :POST_DOWNLOAD_PROMPT
 set "POST_CHOICE="
-set /p "POST_CHOICE=  Choose [y/n/o]: "
-if "!POST_CHOICE!"=="" set "POST_CHOICE=Y"
+if /i "!_RETRY_AVAILABLE!"=="yes" (
+    set /p "POST_CHOICE=  Choose [Y/N/O/R]: "
+) else (
+    set /p "POST_CHOICE=  Choose [Y/N/O]: "
+)
+
+if /i "!POST_CHOICE!"=="Y" goto MAIN_MENU
+if /i "!POST_CHOICE!"=="N" goto EXIT
 if /i "!POST_CHOICE!"=="O" (
     if exist "!_DONE_PATH!" (
         start "" "!_DONE_PATH!"
@@ -328,10 +477,66 @@ if /i "!POST_CHOICE!"=="O" (
     )
     goto POST_DOWNLOAD_PROMPT
 )
-if /i "!POST_CHOICE!"=="N" goto EXIT
-if /i "!POST_CHOICE!"=="Y" goto MAIN_MENU
+if /i "!POST_CHOICE!"=="R" (
+    if /i "!_RETRY_AVAILABLE!"=="yes" (
+        goto RETRY_FAILED
+    ) else (
+        echo   [^^!] No failed items to retry.
+        goto POST_DOWNLOAD_PROMPT
+    )
+)
 echo   [^^!] Invalid option. Try again.
 goto POST_DOWNLOAD_PROMPT
+
+
+:: =====================================================
+:: RETRY_FAILED
+::   Replaces URL_TEMP with only failed URLs and re-runs
+::   the same download via the saved _DONE_RETRY_TARGET
+::   label (set in each download flow before yt-dlp runs).
+:: =====================================================
+:RETRY_FAILED
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|              RETRYING FAILED ITEM(S)                 ^|
+echo  +------------------------------------------------------+
+echo.
+
+set "_rf_count=0"
+for /f "usebackq tokens=*" %%a in ("%FAILED_TEMP%") do set /a _rf_count+=1
+echo   Will retry !_rf_count! failed URL(s^):
+echo.
+set "_ri=0"
+for /f "usebackq tokens=* delims=" %%U in ("%FAILED_TEMP%") do (
+    set /a _ri+=1
+    echo   !_ri!. %%U
+)
+echo.
+echo  ------------------------------------------------------
+echo   [Y]  Confirm retry   [N]  Cancel (back to menu)
+echo  ------------------------------------------------------
+set "_retry_confirm="
+set /p "_retry_confirm=  Choose [Y/N] (default=Y): "
+if "!_retry_confirm!"=="" set "_retry_confirm=Y"
+if /i not "!_retry_confirm!"=="Y" goto MAIN_MENU
+
+:: Replace queue, reset completed/failed trackers
+copy /y "%FAILED_TEMP%" "%URL_TEMP%" >nul
+set /a URL_COUNT=!_rf_count!
+if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
+if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
+if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
+
+:: Dispatch back to the original download invocation
+if /i "!_DONE_RETRY_TARGET!"=="DV_DOWNLOAD"  goto DV_DOWNLOAD
+if /i "!_DONE_RETRY_TARGET!"=="DA_DOWNLOAD"  goto DA_DOWNLOAD
+if /i "!_DONE_RETRY_TARGET!"=="DS_DOWNLOAD"  goto DS_DOWNLOAD
+
+:: Unknown target - shouldn't happen but be safe
+echo   [^^!] Internal: unknown retry target. Returning to menu.
+timeout /t 3 >nul
+goto MAIN_MENU
 
 
 :: =====================================================
@@ -340,7 +545,7 @@ goto POST_DOWNLOAD_PROMPT
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                   GetMedia  v2.6                     ^|
+echo  ^|                   GetMedia  v1.3                     ^|
 echo  ^|             Powered by yt-dlp + ffmpeg               ^|
 echo  +------------------------------------------------------+
 echo.
@@ -352,7 +557,7 @@ echo.
 echo   --- BATCH ---
 echo   [4]  Download Playlist  (Video / Audio / Both)
 echo.
-echo   [5]  Settings
+echo   [S]  Settings
 echo   [X]  Exit
 echo  ------------------------------------------------------
 set "MAIN_CHOICE="
@@ -363,7 +568,7 @@ if "!MAIN_CHOICE!"=="1" goto DV_URL
 if "!MAIN_CHOICE!"=="2" goto DA_URL
 if "!MAIN_CHOICE!"=="3" goto DS_URL
 if "!MAIN_CHOICE!"=="4" goto PLAYLIST_MENU
-if "!MAIN_CHOICE!"=="5" goto SETTINGS
+if /i "!MAIN_CHOICE!"=="S" goto SETTINGS
 if /i "!MAIN_CHOICE!"=="X" goto EXIT
 if /i "!MAIN_CHOICE!"=="Q" goto EXIT
 echo.
@@ -709,9 +914,16 @@ echo  ^|                   DOWNLOADING...                     ^|
 echo  +------------------------------------------------------+
 echo.
 
+:: Retry routing target - RETRY_FAILED jumps back here
+set "_DONE_RETRY_TARGET=DV_DOWNLOAD"
+:DV_DOWNLOAD
 call :BUILD_DL_OPTS
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
+if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
+if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
+if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
+
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -977,9 +1189,15 @@ echo  ^|                   DOWNLOADING...                     ^|
 echo  +------------------------------------------------------+
 echo.
 
+set "_DONE_RETRY_TARGET=DA_DOWNLOAD"
+:DA_DOWNLOAD
 call :BUILD_DL_OPTS
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
+if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
+if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
+if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
+
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -1248,9 +1466,15 @@ echo  ^|                 DOWNLOADING VIDEO...                 ^|
 echo  +------------------------------------------------------+
 echo.
 
+set "_DONE_RETRY_TARGET=DS_DOWNLOAD"
+:DS_DOWNLOAD
 call :BUILD_DL_OPTS
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [VIDEO].%%(ext)s"
+if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
+if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
+if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
+
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [VIDEO].%%(ext)s"
 
 set "_DS_VID_RC=!ERRORLEVEL!"
 if !_DS_VID_RC! NEQ 0 (
@@ -1268,6 +1492,9 @@ echo  ^|                 DOWNLOADING AUDIO...                 ^|
 echo  +------------------------------------------------------+
 echo.
 
+:: For the audio pass we deliberately omit TRACK_OPT - we already tracked
+:: success in the video pass; appending audio successes would double-count
+:: and confuse the failed-items computation.
 "%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [AUDIO].%%(ext)s"
 
 set "_DS_AUD_RC=!ERRORLEVEL!"
@@ -1636,7 +1863,10 @@ goto SETTINGS
 :: =====================================================
 :EXIT
 :: =====================================================
-if exist "%URL_TEMP%" del "%URL_TEMP%"
+if exist "%URL_TEMP%"       del "%URL_TEMP%"
+if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
+if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
+if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 cls
 echo.
 echo  +------------------------------------------------------+
