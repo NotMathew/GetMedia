@@ -68,5 +68,5 @@ Required binaries:
 # Installation on Windows 10/11
 
 ```
-cd Downloads && curl -L -o GetMedia.zip https://github.com/NotMathew/GetMedia/releases/download/v1.2/GetMedia.zip && powershell -Command "Expand-Archive -Force 'GetMedia.zip'" && cd GetMedia && GetMedia.bat
+cd Downloads && curl -L -o GetMedia.zip https://github.com/NotMathew/GetMedia/releases/download/v1.3/GetMedia.zip && powershell -Command "Expand-Archive -Force 'GetMedia.zip'" && cd GetMedia && GetMedia.bat
 ```
