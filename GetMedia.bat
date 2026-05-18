@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
-title GetMedia v1.2
+title GetMedia v2.6
 
 :: =====================================================
-::  GetMedia v1.2  |  Powered by yt-dlp + ffmpeg
+::  GetMedia v2.6  |  Powered by yt-dlp + ffmpeg
 :: =====================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -340,7 +340,7 @@ goto POST_DOWNLOAD_PROMPT
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                   GetMedia  v1.2                     ^|
+echo  ^|                   GetMedia  v2.6                     ^|
 echo  ^|             Powered by yt-dlp + ffmpeg               ^|
 echo  +------------------------------------------------------+
 echo.
@@ -648,15 +648,16 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
-    set "SUBFOLDER="
     if /i "!_DL_MODE!"=="playlist" (
-        set "SUBFOLDER=Video_Playlist"
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Video"
+        if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Playlist\Video
     ) else (
-        set "SUBFOLDER=Video"
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Video"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Video
     )
-    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER!"
-    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-    echo   Subfolder: !SUBFOLDER!
 )
 
 
@@ -921,10 +922,16 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
-    set "SUBFOLDER=Audio"
-    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER!"
-    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-    echo   Subfolder: !SUBFOLDER!
+    if /i "!_DL_MODE!"=="playlist" (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Audio"
+        if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Playlist\Audio
+    ) else (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Audio"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Audio
+    )
 )
 
 
@@ -1182,10 +1189,16 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
-    set "SUBFOLDER=Video+Audio"
-    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER!"
-    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-    echo   Subfolder: !SUBFOLDER!
+    if /i "!_DL_MODE!"=="playlist" (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Video+Audio"
+        if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Playlist\Video+Audio
+    ) else (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Video+Audio"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Video+Audio
+    )
 )
 
 
@@ -1318,7 +1331,7 @@ echo   [14] Update yt-dlp  (self-updater)
 echo   [15] Show tool versions
 echo   [16] Toggle download history log  (writes _history.txt)
 echo   [17] Toggle download archive  (skip already-downloaded videos)
-echo   [18] Set subfolder mode  (ask/yes/no)
+echo   [18] Set subfolder mode  (ask/yes/no)  [Playlist gets Playlist\Type\ nesting]
 echo   [B]  Back to Main Menu
 echo.
 set "SET_CHOICE="
@@ -1451,8 +1464,16 @@ goto SETTINGS
 
 :SET_SUBFOLDER_MODE
 echo.
-echo   Subfolder mode controls whether downloads go into a typed
-echo   subfolder (Video/Audio/Video+Audio) or directly to base path.
+echo   Subfolder mode controls where downloads are saved inside
+echo   the output path. When enabled, the structure is:
+echo.
+echo     Single downloads : Output\Video\
+echo                        Output\Audio\
+echo                        Output\Video+Audio\
+echo.
+echo     Playlist downloads : Output\Playlist\Video\
+echo                          Output\Playlist\Audio\
+echo                          Output\Playlist\Video+Audio\
 echo.
 echo   [1]  Ask each time   (default)
 echo   [2]  Always create   (skip prompt, always make subfolder)
