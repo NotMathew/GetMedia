@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
-title GetMedia v1.3
+title GetMedia v1.4
 
 :: =====================================================
-::  GetMedia v1.3  |  Powered by yt-dlp + ffmpeg
+::  GetMedia v1.4  |  Powered by yt-dlp + ffmpeg
 :: =====================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -127,6 +127,53 @@ set "_url_dupe=no"
 if not exist "%URL_TEMP%" exit /b 0
 findstr /x /i /c:"!_url!" "%URL_TEMP%" >nul 2>&1
 if not errorlevel 1 set "_url_dupe=yes"
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: APPLY_CHANNEL_TAB
+::   In channel mode, rewrites every URL in URL_TEMP to
+::   append the tab suffix (e.g. /videos, /shorts).
+::   Skips URLs that already end with a known tab suffix
+::   so the user can paste a tab URL directly and it
+::   won't double up. Also skips URLs that look like
+::   individual video links (presence of /watch or
+::   /shorts/<id>) so retry flows don't break.
+::   No-op if _CH_TAB is empty (Everything) or mode != channel.
+:: =====================================================
+:APPLY_CHANNEL_TAB
+if /i not "!_DL_MODE!"=="channel" exit /b 0
+if "!_CH_TAB!"=="" exit /b 0
+if not exist "%URL_TEMP%" exit /b 0
+set "_CH_TMP=%TEMP%\getmedia_ch_rewrite.txt"
+if exist "!_CH_TMP!" del "!_CH_TMP!"
+for /f "usebackq tokens=* delims=" %%U in ("%URL_TEMP%") do (
+    set "_u=%%U"
+    :: Strip trailing slash so the suffix doesn't double up
+    if "!_u:~-1!"=="/" set "_u=!_u:~0,-1!"
+    :: Skip individual video URLs (would be mangled by appending /videos)
+    set "_is_video=no"
+    if /i not "!_u:/watch?v=!"=="!_u!"  set "_is_video=yes"
+    if /i not "!_u:/watch/=!"=="!_u!"   set "_is_video=yes"
+    if /i not "!_u:youtu.be/=!"=="!_u!" set "_is_video=yes"
+    :: Detect existing tab suffix on the URL and leave it alone if present
+    set "_has_tab=no"
+    if /i not "!_u:/videos=!"=="!_u!"   set "_has_tab=yes"
+    if /i not "!_u:/shorts=!"=="!_u!"   set "_has_tab=yes"
+    if /i not "!_u:/streams=!"=="!_u!"  set "_has_tab=yes"
+    if /i not "!_u:/releases=!"=="!_u!" set "_has_tab=yes"
+    if /i not "!_u:/playlists=!"=="!_u!" set "_has_tab=yes"
+    if /i not "!_u:/community=!"=="!_u!" set "_has_tab=yes"
+    if /i "!_is_video!"=="yes" (
+        echo !_u!>> "!_CH_TMP!"
+    ) else if /i "!_has_tab!"=="yes" (
+        echo !_u!>> "!_CH_TMP!"
+    ) else (
+        echo !_u!!_CH_TAB!>> "!_CH_TMP!"
+    )
+)
+copy /y "!_CH_TMP!" "%URL_TEMP%" >nul
+del "!_CH_TMP!"
 exit /b 0
 
 
@@ -280,6 +327,12 @@ set "HISTORY_OPT="
 if /i "!CFG_HISTORY!"=="yes" set HISTORY_OPT=--print-to-file "after_move:%%(upload_date)s - %%(title)s - %%(webpage_url)s" "!OUTPUT_PATH!\_history.txt"
 set "ARCHIVE_OPT="
 if /i "!CFG_ARCHIVE!"=="yes" set ARCHIVE_OPT=--download-archive "!OUTPUT_PATH!\_archive.txt" --break-on-existing
+:: In channel mode, force archive ON regardless of CFG_ARCHIVE.
+:: Channel grabs are the canonical incremental use case: re-running
+:: should pick up new uploads only. --break-on-existing is correct
+:: here because channel feeds list newest-first - hitting the first
+:: already-downloaded item means everything older is also archived.
+if /i "!_DL_MODE!"=="channel" set ARCHIVE_OPT=--download-archive "!OUTPUT_PATH!\_archive.txt" --break-on-existing
 :: TRACK_OPT records each individual video yt-dlp processes:
 ::   before_dl  - fires for every item it attempts (expanded from playlists too)
 ::   after_move - fires only when the item completed cleanly
@@ -287,6 +340,13 @@ if /i "!CFG_ARCHIVE!"=="yes" set ARCHIVE_OPT=--download-archive "!OUTPUT_PATH!\_
 :: We compute failures as ATTEMPTED minus COMPLETED in playlist mode, or
 :: URL_TEMP minus COMPLETED in single mode (handled in COLLECT_FAILED_URLS).
 set TRACK_OPT=--print-to-file "before_dl:%%(webpage_url)s" "%ATTEMPTED_TEMP%" --print-to-file "after_move:%%(webpage_url)s" "%COMPLETED_TEMP%"
+:: OUT_PREFIX prefixes the output template with %(uploader)s\ in channel mode.
+:: This is what auto-creates per-channel subfolders without us having to
+:: probe channel metadata in advance. yt-dlp creates the directory as
+:: part of expanding the template; --windows-filenames sanitizes the
+:: uploader name so weird characters don't break the path.
+set "OUT_PREFIX="
+if /i "!_DL_MODE!"=="channel" set "OUT_PREFIX=%%(uploader)s\"
 exit /b 0
 exit /b 0
 
@@ -309,6 +369,7 @@ if exist "%FAILED_TEMP%" del "%FAILED_TEMP%"
 
 set "_source_file=%URL_TEMP%"
 if /i "!_DL_MODE!"=="playlist" set "_source_file=%ATTEMPTED_TEMP%"
+if /i "!_DL_MODE!"=="channel"  set "_source_file=%ATTEMPTED_TEMP%"
 if not exist "!_source_file!" exit /b 0
 
 set "_completed_exists=no"
@@ -420,6 +481,9 @@ if exist "%COMPLETED_TEMP%" (
 )
 if /i "!_DL_MODE!"=="playlist" (
     echo   URLs queued : !_DONE_COUNT! playlist URL(s^)
+    echo   Items found : !_attempted_count!  ^|  Completed: !_completed_count!
+) else if /i "!_DL_MODE!"=="channel" (
+    echo   URLs queued : !_DONE_COUNT! channel URL(s^)
     echo   Items found : !_attempted_count!  ^|  Completed: !_completed_count!
 ) else (
     echo   URLs queued : !_DONE_COUNT! URL(s^)
@@ -545,7 +609,7 @@ goto MAIN_MENU
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                   GetMedia  v1.3                     ^|
+echo  ^|                   GetMedia  v1.4                     ^|
 echo  ^|             Powered by yt-dlp + ffmpeg               ^|
 echo  +------------------------------------------------------+
 echo.
@@ -556,6 +620,7 @@ echo   [3]  Download Video + Audio  (Separate Files)
 echo.
 echo   --- BATCH ---
 echo   [4]  Download Playlist  (Video / Audio / Both)
+echo   [5]  Download Channel   (all uploads from a creator)
 echo.
 echo   [S]  Settings
 echo   [X]  Exit
@@ -564,10 +629,12 @@ set "MAIN_CHOICE="
 set /p "MAIN_CHOICE=  Choose an option: "
 
 set "_DL_MODE=single"
+set "_CH_TAB="
 if "!MAIN_CHOICE!"=="1" goto DV_URL
 if "!MAIN_CHOICE!"=="2" goto DA_URL
 if "!MAIN_CHOICE!"=="3" goto DS_URL
 if "!MAIN_CHOICE!"=="4" goto PLAYLIST_MENU
+if "!MAIN_CHOICE!"=="5" goto CHANNEL_MENU
 if /i "!MAIN_CHOICE!"=="S" goto SETTINGS
 if /i "!MAIN_CHOICE!"=="X" goto EXIT
 if /i "!MAIN_CHOICE!"=="Q" goto EXIT
@@ -609,6 +676,81 @@ timeout /t 1 >nul
 goto PLAYLIST_MENU
 
 
+:: =====================================================
+:CHANNEL_MENU
+:: =====================================================
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|                  CHANNEL DOWNLOAD                    ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Downloads every item from a channel/user/creator URL.
+echo   Examples:
+echo     YouTube : https://www.youtube.com/@NoCopyrightSounds
+echo     YouTube : https://www.youtube.com/c/SomeChannel
+echo.
+echo   Each channel gets its own auto-named subfolder
+echo   (based on the uploader metadata - no manual typing).
+echo.
+echo   Archive will be enabled automatically so re-runs only
+echo   fetch NEW uploads since last time.
+echo.
+echo   --- Step 1: What to download from each item? ---
+echo   [1]  Video             (merged video+audio file)
+echo   [2]  Audio Only        (extract audio track)
+echo   [3]  Video + Audio     (separate streams - advanced)
+echo   [B]  Back to Main Menu
+echo  ------------------------------------------------------
+set "CHDL_CHOICE="
+set /p "CHDL_CHOICE=  Choose a format: "
+if /i "!CHDL_CHOICE!"=="B" goto MAIN_MENU
+if not "!CHDL_CHOICE!"=="1" if not "!CHDL_CHOICE!"=="2" if not "!CHDL_CHOICE!"=="3" (
+    echo.
+    echo   [^^!] Invalid option. Try again.
+    timeout /t 1 >nul
+    goto CHANNEL_MENU
+)
+
+:CHANNEL_TAB_MENU
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|             CHANNEL DOWNLOAD - SCOPE                 ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Which tab(s) on the channel to fetch?
+echo.
+echo   [1]  Videos tab only   (recommended - main uploads)
+echo   [2]  Shorts tab only
+echo   [3]  Livestreams tab only
+echo   [4]  Releases tab only (music releases / albums)
+echo   [5]  Everything        (Videos + Shorts + Live + ...)
+echo   [B]  Back
+echo  ------------------------------------------------------
+echo   TIP: Most channels have hundreds of items. Start with
+echo        a single tab to avoid pulling thousands of files.
+echo  ------------------------------------------------------
+set "CHTAB_CHOICE="
+set /p "CHTAB_CHOICE=  Choose tab scope [default=1]: "
+if /i "!CHTAB_CHOICE!"=="B" goto CHANNEL_MENU
+if "!CHTAB_CHOICE!"=="" set "CHTAB_CHOICE=1"
+:: _CH_TAB holds the URL suffix yt-dlp will use; empty = no transform
+set "_CH_TAB="
+set "_CH_TAB_LABEL=Videos tab"
+if "!CHTAB_CHOICE!"=="1" (set "_CH_TAB=/videos"   & set "_CH_TAB_LABEL=Videos tab only")
+if "!CHTAB_CHOICE!"=="2" (set "_CH_TAB=/shorts"   & set "_CH_TAB_LABEL=Shorts tab only")
+if "!CHTAB_CHOICE!"=="3" (set "_CH_TAB=/streams"  & set "_CH_TAB_LABEL=Livestreams tab only")
+if "!CHTAB_CHOICE!"=="4" (set "_CH_TAB=/releases" & set "_CH_TAB_LABEL=Releases tab only")
+if "!CHTAB_CHOICE!"=="5" (set "_CH_TAB="          & set "_CH_TAB_LABEL=Everything (all tabs)")
+
+set "_DL_MODE=channel"
+if "!CHDL_CHOICE!"=="1" goto DV_URL
+if "!CHDL_CHOICE!"=="2" goto DA_URL
+if "!CHDL_CHOICE!"=="3" goto DS_URL
+goto CHANNEL_MENU
+
+
 :: #####################################################
 ::  DOWNLOAD VIDEO  (6 steps)
 :: #####################################################
@@ -616,7 +758,14 @@ goto PLAYLIST_MENU
 :DV_URL
 cls
 echo.
-if /i "!_DL_MODE!"=="playlist" (
+if /i "!_DL_MODE!"=="channel" (
+echo  +------------------------------------------------------+
+echo  ^|               VIDEO CHANNEL DOWNLOAD                 ^|
+echo  ^|  Step 1/6  ^|  URL Input  ^|  Mode: Channel            ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Tab scope : !_CH_TAB_LABEL!
+) else if /i "!_DL_MODE!"=="playlist" (
 echo  +------------------------------------------------------+
 echo  ^|              VIDEO PLAYLIST DOWNLOAD                 ^|
 echo  ^|  Step 1/6  ^|  URL Input  ^|  Mode: Playlist           ^|
@@ -853,7 +1002,12 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
-    if /i "!_DL_MODE!"=="playlist" (
+    if /i "!_DL_MODE!"=="channel" (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\Video"
+        if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Channel\Video\^<uploader^>\ ^(auto-named per channel^)
+    ) else if /i "!_DL_MODE!"=="playlist" (
         set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Video"
         if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
         if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
@@ -870,7 +1024,10 @@ if /i "!CREATE_SUBFOLDER!"=="n" (
 ::  DV_SUMMARY - [Step 6/6]
 :: =====================================================
 :DV_SUMMARY
-if /i "!_DL_MODE!"=="playlist" (
+if /i "!_DL_MODE!"=="channel" (
+    set "PL_OPTS=--ignore-errors"
+    set "PL_LABEL=Channel - !_CH_TAB_LABEL!, skip broken"
+) else if /i "!_DL_MODE!"=="playlist" (
     set "PL_OPTS=--ignore-errors"
     set "PL_LABEL=Playlist - download all, skip broken"
 ) else (
@@ -918,12 +1075,13 @@ echo.
 set "_DONE_RETRY_TARGET=DV_DOWNLOAD"
 :DV_DOWNLOAD
 call :BUILD_DL_OPTS
+call :APPLY_CHANNEL_TAB
 
 if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s"
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -941,7 +1099,14 @@ goto POST_DOWNLOAD
 :DA_URL
 cls
 echo.
-if /i "!_DL_MODE!"=="playlist" (
+if /i "!_DL_MODE!"=="channel" (
+echo  +------------------------------------------------------+
+echo  ^|               AUDIO CHANNEL DOWNLOAD                 ^|
+echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Channel            ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Tab scope : !_CH_TAB_LABEL!
+) else if /i "!_DL_MODE!"=="playlist" (
 echo  +------------------------------------------------------+
 echo  ^|              AUDIO PLAYLIST DOWNLOAD                 ^|
 echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Playlist           ^|
@@ -1134,7 +1299,12 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
-    if /i "!_DL_MODE!"=="playlist" (
+    if /i "!_DL_MODE!"=="channel" (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\Audio"
+        if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Channel\Audio\^<uploader^>\ ^(auto-named per channel^)
+    ) else if /i "!_DL_MODE!"=="playlist" (
         set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Audio"
         if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
         if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
@@ -1148,7 +1318,10 @@ if /i "!CREATE_SUBFOLDER!"=="n" (
 
 
 :DA_SUMMARY
-if /i "!_DL_MODE!"=="playlist" (
+if /i "!_DL_MODE!"=="channel" (
+    set "PL_OPTS=--ignore-errors"
+    set "PL_LABEL=Channel - !_CH_TAB_LABEL!, skip broken"
+) else if /i "!_DL_MODE!"=="playlist" (
     set "PL_OPTS=--ignore-errors"
     set "PL_LABEL=Playlist - download all, skip broken"
 ) else (
@@ -1192,12 +1365,13 @@ echo.
 set "_DONE_RETRY_TARGET=DA_DOWNLOAD"
 :DA_DOWNLOAD
 call :BUILD_DL_OPTS
+call :APPLY_CHANNEL_TAB
 
 if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).200B.%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s"
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -1215,7 +1389,14 @@ goto POST_DOWNLOAD
 :DS_URL
 cls
 echo.
-if /i "!_DL_MODE!"=="playlist" (
+if /i "!_DL_MODE!"=="channel" (
+echo  +------------------------------------------------------+
+echo  ^|        VIDEO + AUDIO CHANNEL  (Separate Files^)       ^|
+echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Channel            ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Tab scope : !_CH_TAB_LABEL!
+) else if /i "!_DL_MODE!"=="playlist" (
 echo  +------------------------------------------------------+
 echo  ^|       VIDEO + AUDIO PLAYLIST  (Separate Files^)      ^|
 echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Playlist           ^|
@@ -1407,7 +1588,12 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
 ) else (
-    if /i "!_DL_MODE!"=="playlist" (
+    if /i "!_DL_MODE!"=="channel" (
+        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\Video+Audio"
+        if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
+        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+        echo   Subfolder: Channel\Video+Audio\^<uploader^>\ ^(auto-named per channel^)
+    ) else if /i "!_DL_MODE!"=="playlist" (
         set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Video+Audio"
         if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
         if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
@@ -1421,7 +1607,10 @@ if /i "!CREATE_SUBFOLDER!"=="n" (
 
 
 :DS_SUMMARY
-if /i "!_DL_MODE!"=="playlist" (
+if /i "!_DL_MODE!"=="channel" (
+    set "PL_OPTS=--ignore-errors"
+    set "PL_LABEL=Channel - !_CH_TAB_LABEL!, skip broken"
+) else if /i "!_DL_MODE!"=="playlist" (
     set "PL_OPTS=--ignore-errors"
     set "PL_LABEL=Playlist - download all, skip broken"
 ) else (
@@ -1469,12 +1658,13 @@ echo.
 set "_DONE_RETRY_TARGET=DS_DOWNLOAD"
 :DS_DOWNLOAD
 call :BUILD_DL_OPTS
+call :APPLY_CHANNEL_TAB
 
 if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [VIDEO].%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s"
 
 set "_DS_VID_RC=!ERRORLEVEL!"
 if !_DS_VID_RC! NEQ 0 (
@@ -1495,7 +1685,7 @@ echo.
 :: For the audio pass we deliberately omit TRACK_OPT - we already tracked
 :: success in the video pass; appending audio successes would double-count
 :: and confuse the failed-items computation.
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\%%(title).180B [AUDIO].%%(ext)s"
+"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s"
 
 set "_DS_AUD_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
