@@ -518,7 +518,7 @@ echo  ------------------------------------------------------
 if /i "!_RETRY_AVAILABLE!"=="yes" (
     echo   [R]  Retry failed item(s^) only
 )
-echo   [Y]  Return to Main Menu  (default)
+echo   [Y]  Return to Main Menu
 echo   [N]  Exit GetMedia
 echo   [O]  Open output folder
 echo  ------------------------------------------------------
