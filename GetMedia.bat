@@ -1,16 +1,22 @@
 @echo off
 setlocal EnableDelayedExpansion
-title GetMedia v1.4
+title GetMedia v1.5
 
 :: =====================================================
-::  GetMedia v1.4  |  Powered by yt-dlp + ffmpeg
+::  GetMedia v1.5  |  Powered by yt-dlp + ffmpeg
 :: =====================================================
 
 set "SCRIPT_DIR=%~dp0"
 set "BIN=%SCRIPT_DIR%bin"
-set "YTDLP=%BIN%\yt-dlp.exe"
-set "FFMPEG=%BIN%\ffmpeg.exe"
+:: yt-dlp / ffmpeg are resolved at startup by :CHECK_TOOLS. It prefers
+:: copies found on PATH (winget / pip / npm, etc.) and only falls back
+:: to the local %BIN% folder if a package-manager copy isn't available.
+set "YTDLP="
+set "FFMPEG="
+set "FFMPEG_DIR="
 set "DEFAULT_OUTPUT=%SCRIPT_DIR%Output"
+set "LOG_DIR=%SCRIPT_DIR%Logs"
+set "LOG_TMP=%TEMP%\getmedia_run.log"
 set "URL_TEMP=%TEMP%\getmedia_urls.txt"
 set "FAILED_TEMP=%TEMP%\getmedia_failed.txt"
 set "COMPLETED_TEMP=%TEMP%\getmedia_completed.txt"
@@ -49,40 +55,327 @@ goto MAIN_MENU
 
 :: =====================================================
 :: HELPER: CHECK_TOOLS
+::   Resolves yt-dlp and ffmpeg. Priority order:
+::     1) whatever is found on PATH (winget / pip / npm / manual PATH)
+::     2) the local %BIN% folder (manual fallback only)
+::   If a package-manager copy is found we use it and DO NOT create a
+::   bin folder. If neither tool can be located (or one fails to run),
+::   :TOOLS_MISSING_PROMPT offers a winget auto-install or a manual
+::   bin-folder setup, then we re-detect.
 :: =====================================================
 :CHECK_TOOLS
-if not exist "%YTDLP%" (
-    echo.
-    echo  [ERROR] yt-dlp.exe not found!
-    echo  Expected location: %YTDLP%
-    echo.
-    echo  Please place yt-dlp.exe in the bin folder.
-    echo.
-    pause & exit /b 1
+:: Pull the live PATH from the registry first, in case this window was
+:: opened before a package manager added the tools.
+call :REFRESH_PATH
+:_CT_DETECT
+set "YTDLP="
+set "FFMPEG="
+set "FFMPEG_DIR="
+
+:: 1) Prefer tools already available on PATH (package-manager installs)
+for /f "delims=" %%I in ('where yt-dlp 2^>nul') do if not defined YTDLP set "YTDLP=%%I"
+for /f "delims=" %%I in ('where ffmpeg 2^>nul') do if not defined FFMPEG set "FFMPEG=%%I"
+
+:: 2) Check winget's shim folder directly (covers the case where PATH
+::    still hasn't caught up after a fresh winget install)
+if not defined YTDLP  if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\yt-dlp.exe"  set "YTDLP=%LOCALAPPDATA%\Microsoft\WinGet\Links\yt-dlp.exe"
+if not defined FFMPEG if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\ffmpeg.exe" set "FFMPEG=%LOCALAPPDATA%\Microsoft\WinGet\Links\ffmpeg.exe"
+
+:: 3) Fall back to the local bin folder for whichever wasn't found
+if not defined YTDLP  if exist "%BIN%\yt-dlp.exe"  set "YTDLP=%BIN%\yt-dlp.exe"
+if not defined FFMPEG if exist "%BIN%\ffmpeg.exe" set "FFMPEG=%BIN%\ffmpeg.exe"
+
+set "_TOOLS_OK=yes"
+if not defined YTDLP  set "_TOOLS_OK=no"
+if not defined FFMPEG set "_TOOLS_OK=no"
+
+:: 3) Validate that the located tools actually run (catch corrupt copies)
+if /i "!_TOOLS_OK!"=="yes" (
+    "!FFMPEG!" -version >nul 2>&1
+    if errorlevel 1 set "_TOOLS_OK=no"
 )
-if not exist "%FFMPEG%" (
-    echo.
-    echo  [ERROR] ffmpeg.exe not found!
-    echo  Expected location: %FFMPEG%
-    echo.
-    echo  Please place ffmpeg.exe in the bin folder.
-    echo.
-    pause & exit /b 1
+if /i "!_TOOLS_OK!"=="yes" (
+    "!YTDLP!" --version >nul 2>&1
+    if errorlevel 1 set "_TOOLS_OK=no"
 )
-"%FFMPEG%" -version >nul 2>&1
+
+if /i "!_TOOLS_OK!"=="yes" (
+    :: Record the folder ffmpeg lives in so yt-dlp can be pointed at it
+    for %%F in ("!FFMPEG!") do set "FFMPEG_DIR=%%~dpF"
+    if "!FFMPEG_DIR:~-1!"=="\" set "FFMPEG_DIR=!FFMPEG_DIR:~0,-1!"
+    exit /b 0
+)
+
+:: Tools missing or broken - show the installer / help menu, then retry
+call :TOOLS_MISSING_PROMPT
+if errorlevel 1 exit /b 1
+goto _CT_DETECT
+
+
+:: =====================================================
+:: HELPER: TOOLS_MISSING_PROMPT
+::   Returns errorlevel 0 to re-run detection (after a winget install),
+::   or errorlevel 1 to abort the whole script.
+:: =====================================================
+:TOOLS_MISSING_PROMPT
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|            REQUIRED TOOLS NOT AVAILABLE              ^|
+echo  +------------------------------------------------------+
+echo.
+echo   GetMedia needs BOTH yt-dlp and ffmpeg to run, and at least
+echo   one of them is missing or could not be started (corrupted).
+echo.
+if defined YTDLP  (echo   yt-dlp : detected -^> !YTDLP!) else (echo   yt-dlp : NOT found)
+if defined FFMPEG (echo   ffmpeg : detected -^> !FFMPEG!) else (echo   ffmpeg : NOT found)
+echo.
+echo   These tools are normally installed with a package manager.
+echo   This script can install the missing one(s^) for you via winget:
+echo       winget install yt-dlp
+echo       winget install ffmpeg
+echo.
+echo  ------------------------------------------------------
+echo   [1]  Install the missing tool(s^) automatically (winget)
+echo   [2]  I will add them manually to a bin folder
+echo   [B]  Exit GetMedia
+echo  ------------------------------------------------------
+set "_TM_CHOICE="
+set /p "_TM_CHOICE=  Choose [1/2/B]: "
+if /i "!_TM_CHOICE!"=="B" exit /b 1
+if "!_TM_CHOICE!"=="1" goto _TM_WINGET
+if "!_TM_CHOICE!"=="2" goto _TM_MANUAL
+echo   [^^!] Invalid option. Try again.
+timeout /t 1 >nul
+goto TOOLS_MISSING_PROMPT
+
+:_TM_WINGET
+where winget >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo  [ERROR] ffmpeg.exe failed validation - the file may be corrupt.
+    echo   [^^!] winget is not available on this system.
+    echo       Install "App Installer" from the Microsoft Store and
+    echo       retry, or use option 2 to set up a bin folder instead.
     echo.
-    pause & exit /b 1
+    pause
+    goto TOOLS_MISSING_PROMPT
 )
-"%YTDLP%" --version >nul 2>&1
-if errorlevel 1 (
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|               INSTALLING VIA WINGET...               ^|
+echo  +------------------------------------------------------+
+echo.
+if not defined YTDLP (
+    echo   ^>^> winget install yt-dlp
+    winget install --id yt-dlp.yt-dlp -e --accept-source-agreements --accept-package-agreements
     echo.
-    echo  [ERROR] yt-dlp.exe failed validation - the file may be corrupt.
-    echo.
-    pause & exit /b 1
 )
+if not defined FFMPEG (
+    echo   ^>^> winget install ffmpeg
+    winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
+    echo.
+)
+echo  ------------------------------------------------------
+echo   Install attempt finished. Refreshing PATH...
+:: winget adds tools to the PATH in the registry, but THIS already-open
+:: window still holds the old PATH. Pull the fresh PATH from the registry
+:: so the re-check below can see the newly installed tools immediately.
+call :REFRESH_PATH
+echo.
+echo   Re-opening GetMedia so the newly-installed tools are visible.
+echo   You have a 3 second countdown to read this message.
+echo.
+for /L %%I in (3,-1,1) do (
+    echo    %%I...
+    timeout /t 1 >nul
+)
+echo.
+call :REFRESH_PATH
+start "GetMedia" cmd.exe /c ""%~f0" %*"
+exit
+
+:_TM_MANUAL
+if not exist "%BIN%" mkdir "%BIN%"
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|          MANUAL SETUP - bin FOLDER CREATED          ^|
+echo  +------------------------------------------------------+
+echo.
+echo   A bin folder is ready at:
+echo       %BIN%
+echo.
+echo   Download these two files and drop them inside it:
+echo.
+echo     yt-dlp.exe
+echo       https://github.com/yt-dlp/yt-dlp/releases/latest
+echo.
+echo     ffmpeg.exe
+echo       https://www.gyan.dev/ffmpeg/builds/
+echo       (grab "ffmpeg-release-essentials", then copy ffmpeg.exe
+echo        out of its bin\ folder)
+echo.
+echo   When BOTH files are in place, start GetMedia again.
+echo  ------------------------------------------------------
+echo.
+pause
+echo.
+echo   If you want GetMedia to re-open now (to re-check for the
+echo   newly-placed binaries), the script will restart in 3 seconds.
+for /L %%I in (3,-1,1) do (
+    echo    %%I...
+    timeout /t 1 >nul
+)
+echo.
+start "GetMedia" cmd.exe /c ""%~f0" %*"
+exit
+
+
+:: =====================================================
+:: HELPER: BYTES_TO_MB
+::   Converts a raw byte count to megabytes (decimal, /1,000,000)
+::   with one decimal place using string math, so multi-gigabyte
+::   sizes never overflow cmd's 32-bit set /a arithmetic.
+::   Args: %1 = byte count, %2 = output variable name.
+::   The output var is set to "?" when the input isn't numeric.
+:: =====================================================
+:: =====================================================
+:: HELPER: REFRESH_PATH
+::   Reload the PATH environment from the registry (Machine + User)
+::   so newly-installed tools become visible to this process and
+::   any child cmd.exe started after this call.
+:: =====================================================
+:REFRESH_PATH
+setlocal EnableDelayedExpansion
+set "_newPath="
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "_newPath=%%P"
+if defined _newPath (
+    endlocal & set "PATH=%_newPath%"
+) else (
+    endlocal
+)
+exit /b 0
+
+:: =====================================================
+:BYTES_TO_MB
+setlocal EnableDelayedExpansion
+set "_b=%~1"
+set "_bad="
+if "!_b!"=="" set "_bad=1"
+for /f "delims=0123456789" %%c in ("!_b!") do set "_bad=1"
+if defined _bad (
+    endlocal & set "%~2=?"
+    exit /b 0
+)
+:: Strip leading zeros (keep at least one digit)
+for /f "tokens=* delims=0" %%n in ("!_b!") do set "_b=%%n"
+if "!_b!"=="" set "_b=0"
+:: Measure digit length
+set "_t=!_b!"
+set "_len=0"
+:_b2m_count
+if not "!_t!"=="" (
+    set "_t=!_t:~1!"
+    set /a _len+=1
+    goto _b2m_count
+)
+if !_len! GTR 6 (
+    set "_int=!_b:~0,-6!"
+    set "_dec=!_b:~-6,1!"
+) else (
+    set "_int=0"
+    set "_pad=000000!_b!"
+    set "_dec=!_pad:~-6,1!"
+)
+if "!_int!"=="" set "_int=0"
+if "!_dec!"=="" set "_dec=0"
+set "_out=!_int!.!_dec!"
+endlocal & set "%~2=%_out%"
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: LOG_INIT
+::   Starts a fresh per-run log capture in %LOG_TMP%. yt-dlp's
+::   warnings/errors are appended to this file during the download
+::   (via 2^>^>), and the user is offered to save it afterwards.
+:: =====================================================
+:LOG_INIT
+>"%LOG_TMP%"  echo ====== GetMedia Download Log ======
+>>"%LOG_TMP%" echo Started : %DATE% %TIME%
+>>"%LOG_TMP%" echo Mode    : !_DL_MODE!
+>>"%LOG_TMP%" echo Target  : !_DONE_RETRY_TARGET!
+>>"%LOG_TMP%" echo Output  : !OUTPUT_PATH!
+>>"%LOG_TMP%" echo Cookies : !CFG_COOKIES_LABEL!
+>>"%LOG_TMP%" echo.
+>>"%LOG_TMP%" echo ------ URLs queued ------
+type "%URL_TEMP%" >>"%LOG_TMP%" 2>nul
+>>"%LOG_TMP%" echo.
+>>"%LOG_TMP%" echo ------ yt-dlp output (stdout + stderr) ------
+exit /b 0
+
+
+:: =====================================================
+:: HELPER: LOG_FINALIZE
+::   Appends the run result (status + attempted/completed/failed)
+::   to the log capture. Called from POST_DOWNLOAD.
+:: =====================================================
+:LOG_FINALIZE
+if not defined LOG_TMP exit /b 0
+if not exist "%LOG_TMP%" exit /b 0
+>>"%LOG_TMP%" echo.
+>>"%LOG_TMP%" echo ------ Result ------
+>>"%LOG_TMP%" echo Status    : !_DONE_STATUS!
+>>"%LOG_TMP%" echo Attempted : !_attempted_count!   Completed: !_completed_count!
+if exist "%FAILED_TEMP%" (
+    >>"%LOG_TMP%" echo ------ Failed items ------
+    type "%FAILED_TEMP%" >>"%LOG_TMP%" 2>nul
+)
+>>"%LOG_TMP%" echo ------ Finished : %DATE% %TIME% ------
+    :: Auto-save the full run log to the Logs folder with a timestamp
+    if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+    set "_logts="
+    for /f "usebackq tokens=* delims=" %%T in (`powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"`) do set "_logts=%%T"
+    if "!_logts!"=="" set "_logts=log"
+    set "_LAST_LOGPATH=%LOG_DIR%\getmedia_!_logts!.log"
+    copy /y "%LOG_TMP%" "!_LAST_LOGPATH!" >nul 2>&1
+    echo   Log auto-saved to: !_LAST_LOGPATH!
+    exit /b 0
+
+
+:: =====================================================
+:: HELPER: LOG_PROMPT
+::   Asks the user whether to keep the download log (default = no).
+::   When kept, it is copied into the Logs folder with a timestamp.
+:: =====================================================
+:LOG_PROMPT
+if not defined LOG_TMP exit /b 0
+if not exist "%LOG_TMP%" exit /b 0
+echo.
+if defined _LAST_LOGPATH (
+    echo   Full run log saved to: !_LAST_LOGPATH!
+    set "_openlog="
+    set /p "_openlog=  Open the log file now? (y/n) [n]: "
+    if "!_openlog!"=="" set "_openlog=n"
+    if /i "!_openlog!"=="y" start "" "!_LAST_LOGPATH!"
+    echo.
+    pause
+    exit /b 0
+)
+
+set "_savelog="
+set /p "_savelog=  Save the download log for troubleshooting? (y/n) [n]: "
+if "!_savelog!"=="" set "_savelog=n"
+if /i not "!_savelog!"=="y" exit /b 0
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+set "_logts="
+for /f "usebackq tokens=* delims=" %%T in (`powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"`) do set "_logts=%%T"
+if "!_logts!"=="" set "_logts=log"
+copy /y "%LOG_TMP%" "%LOG_DIR%\getmedia_!_logts!.log" >nul
+echo   Log saved to: %LOG_DIR%\getmedia_!_logts!.log
+echo.
+pause
 exit /b 0
 
 
@@ -289,13 +582,21 @@ echo.
 set "_cookie_opt="
 if not "!CFG_COOKIES!"=="none" set "_cookie_opt=--cookies-from-browser !CFG_COOKIES!"
 set "_pv_idx=0"
+set "_PV_FS=%TEMP%\getmedia_fsize.txt"
 for /f "usebackq tokens=* delims=" %%U in ("%URL_TEMP%") do (
     set /a _pv_idx+=1
     echo   !_pv_idx!.
-    "%YTDLP%" --no-warnings --skip-download --ignore-no-formats-error !_cookie_opt! --print "  Title    : %%(title)s" --print "  Uploader : %%(uploader)s" --print "  Duration : %%(duration_string)s" --print "  Filesize : %%(filesize_approx)s bytes" -I 1:1 "%%U" 2>nul
+    "%YTDLP%" --no-warnings --skip-download --ignore-no-formats-error !_cookie_opt! --print "  Title    : %%(title)s" --print "  Uploader : %%(uploader)s" --print "  Duration : %%(duration_string)s" -I 1:1 "%%U" 2>nul
     if errorlevel 1 echo     [^^!] Could not fetch info for this URL.
+    :: Filesize is captured separately so we can convert bytes -> MB
+    "%YTDLP%" --no-warnings --skip-download --ignore-no-formats-error !_cookie_opt! --print "%%(filesize_approx)s" -I 1:1 "%%U" > "!_PV_FS!" 2>nul
+    set "_fsize="
+    for /f "usebackq tokens=* delims=" %%S in ("!_PV_FS!") do set "_fsize=%%S"
+    call :BYTES_TO_MB "!_fsize!" _fmb
+    if "!_fmb!"=="?" (echo     Filesize : ^(unknown^)) else (echo     Filesize : !_fmb! MB ^(approx^))
     echo.
 )
+if exist "%TEMP%\getmedia_fsize.txt" del "%TEMP%\getmedia_fsize.txt"
 exit /b 0
 
 
@@ -514,6 +815,10 @@ if /i not "!_DONE_STATUS!"=="OK" (
     )
 )
 
+:: --- Download log: record the result, then offer to save it ---
+call :LOG_FINALIZE
+call :LOG_PROMPT
+
 echo  ------------------------------------------------------
 if /i "!_RETRY_AVAILABLE!"=="yes" (
     echo   [R]  Retry failed item(s^) only
@@ -609,7 +914,7 @@ goto MAIN_MENU
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|                   GetMedia  v1.4                     ^|
+echo  ^|                   GetMedia  v1.5                     ^|
 echo  ^|             Powered by yt-dlp + ffmpeg               ^|
 echo  +------------------------------------------------------+
 echo.
@@ -999,25 +1304,35 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
     echo.
     set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (y/n) [y]: "
 )
+if "!CREATE_SUBFOLDER!"=="" set "CREATE_SUBFOLDER=y"
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
-) else (
-    if /i "!_DL_MODE!"=="channel" (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\Video"
-        if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Channel\Video\^<uploader^>\ ^(auto-named per channel^)
-    ) else if /i "!_DL_MODE!"=="playlist" (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Video"
-        if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Playlist\Video
-    ) else (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Video"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Video
-    )
+    goto DV_PATH_DONE
 )
+
+:DV_SUBNAME
+set "SUBFOLDER_NAME=Video"
+echo.
+set "SF_NAME_IN="
+set /p "SF_NAME_IN=  Subfolder name [default=Video] (B=back): "
+if /i "!SF_NAME_IN!"=="B" goto DV_OUT
+if not "!SF_NAME_IN!"=="" set "SUBFOLDER_NAME=!SF_NAME_IN!"
+if /i "!_DL_MODE!"=="channel" (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\!SUBFOLDER_NAME!"
+    if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: Channel\!SUBFOLDER_NAME!\^<channel^>\ ^(auto-named per channel^)
+) else if /i "!_DL_MODE!"=="playlist" (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\!SUBFOLDER_NAME!"
+    if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: Playlist\!SUBFOLDER_NAME!
+) else (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER_NAME!"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: !SUBFOLDER_NAME!
+)
+:DV_PATH_DONE
 
 
 :: =====================================================
@@ -1081,7 +1396,8 @@ if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s"
+call :LOG_INIT
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s" >>"%LOG_TMP%" 2>&1
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -1296,25 +1612,35 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
     echo.
     set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (y/n) [y]: "
 )
+if "!CREATE_SUBFOLDER!"=="" set "CREATE_SUBFOLDER=y"
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
-) else (
-    if /i "!_DL_MODE!"=="channel" (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\Audio"
-        if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Channel\Audio\^<uploader^>\ ^(auto-named per channel^)
-    ) else if /i "!_DL_MODE!"=="playlist" (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Audio"
-        if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Playlist\Audio
-    ) else (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Audio"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Audio
-    )
+    goto DA_PATH_DONE
 )
+
+:DA_SUBNAME
+set "SUBFOLDER_NAME=Audio"
+echo.
+set "SF_NAME_IN="
+set /p "SF_NAME_IN=  Subfolder name [default=Audio] (B=back): "
+if /i "!SF_NAME_IN!"=="B" goto DA_OUT
+if not "!SF_NAME_IN!"=="" set "SUBFOLDER_NAME=!SF_NAME_IN!"
+if /i "!_DL_MODE!"=="channel" (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\!SUBFOLDER_NAME!"
+    if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: Channel\!SUBFOLDER_NAME!\^<channel^>\ ^(auto-named per channel^)
+) else if /i "!_DL_MODE!"=="playlist" (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\!SUBFOLDER_NAME!"
+    if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: Playlist\!SUBFOLDER_NAME!
+) else (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER_NAME!"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: !SUBFOLDER_NAME!
+)
+:DA_PATH_DONE
 
 
 :DA_SUMMARY
@@ -1371,7 +1697,8 @@ if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s"
+call :LOG_INIT
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s" >>"%LOG_TMP%" 2>&1
 
 set "_DL_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -1585,25 +1912,35 @@ if /i "!CFG_ALWAYS_SUBFOLDER!"=="yes" (
     echo.
     set /p "CREATE_SUBFOLDER=  Create subfolder for this download? (y/n) [y]: "
 )
+if "!CREATE_SUBFOLDER!"=="" set "CREATE_SUBFOLDER=y"
 if /i "!CREATE_SUBFOLDER!"=="n" (
     set "OUTPUT_PATH=!BASE_OUTPUT_PATH!"
-) else (
-    if /i "!_DL_MODE!"=="channel" (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\Video+Audio"
-        if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Channel\Video+Audio\^<uploader^>\ ^(auto-named per channel^)
-    ) else if /i "!_DL_MODE!"=="playlist" (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\Video+Audio"
-        if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Playlist\Video+Audio
-    ) else (
-        set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Video+Audio"
-        if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
-        echo   Subfolder: Video+Audio
-    )
+    goto DS_PATH_DONE
 )
+
+:DS_SUBNAME
+set "SUBFOLDER_NAME=Video+Audio"
+echo.
+set "SF_NAME_IN="
+set /p "SF_NAME_IN=  Subfolder name [default=Video+Audio] (B=back): "
+if /i "!SF_NAME_IN!"=="B" goto DS_OUT
+if not "!SF_NAME_IN!"=="" set "SUBFOLDER_NAME=!SF_NAME_IN!"
+if /i "!_DL_MODE!"=="channel" (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Channel\!SUBFOLDER_NAME!"
+    if not exist "!BASE_OUTPUT_PATH!\Channel" mkdir "!BASE_OUTPUT_PATH!\Channel"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: Channel\!SUBFOLDER_NAME!\^<channel^>\ ^(auto-named per channel^)
+) else if /i "!_DL_MODE!"=="playlist" (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\Playlist\!SUBFOLDER_NAME!"
+    if not exist "!BASE_OUTPUT_PATH!\Playlist" mkdir "!BASE_OUTPUT_PATH!\Playlist"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: Playlist\!SUBFOLDER_NAME!
+) else (
+    set "OUTPUT_PATH=!BASE_OUTPUT_PATH!\!SUBFOLDER_NAME!"
+    if not exist "!OUTPUT_PATH!" mkdir "!OUTPUT_PATH!"
+    echo   Subfolder: !SUBFOLDER_NAME!
+)
+:DS_PATH_DONE
 
 
 :DS_SUMMARY
@@ -1664,7 +2001,8 @@ if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s"
+call :LOG_INIT
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s" >>"%LOG_TMP%" 2>&1
 
 set "_DS_VID_RC=!ERRORLEVEL!"
 if !_DS_VID_RC! NEQ 0 (
@@ -1685,7 +2023,7 @@ echo.
 :: For the audio pass we deliberately omit TRACK_OPT - we already tracked
 :: success in the video pass; appending audio successes would double-count
 :: and confuse the failed-items computation.
-"%YTDLP%" --ffmpeg-location "%BIN%" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s"
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s" >>"%LOG_TMP%" 2>&1
 
 set "_DS_AUD_RC=!ERRORLEVEL!"
 set "_DONE_COUNT=!URL_COUNT!"
@@ -2057,6 +2395,7 @@ if exist "%URL_TEMP%"       del "%URL_TEMP%"
 if exist "%COMPLETED_TEMP%" del "%COMPLETED_TEMP%"
 if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
+if exist "%LOG_TMP%"        del "%LOG_TMP%"
 cls
 echo.
 echo  +------------------------------------------------------+
