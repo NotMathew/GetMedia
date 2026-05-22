@@ -364,7 +364,6 @@ if defined _LAST_LOGPATH (
     if "!_openlog!"=="" set "_openlog=n"
     if /i "!_openlog!"=="y" start "" "!_LAST_LOGPATH!"
     echo.
-    pause
     exit /b 0
 )
 
@@ -965,6 +964,10 @@ set "VID_FORMAT_STR="
 set "RESOLUTION="
 set "AUD_FORMAT="
 set "AUD_QUALITY="
+set "DS_VID_FORMAT="
+set "DS_VID_REMUX="
+set "SUB_OPTS="
+set "SUB_LABEL=None"
 if "!MAIN_CHOICE!"=="1" goto DV_URL
 if "!MAIN_CHOICE!"=="2" goto DA_URL
 if "!MAIN_CHOICE!"=="3" goto DS_URL
@@ -1752,19 +1755,19 @@ echo.
 if /i "!_DL_MODE!"=="channel" (
 echo  +------------------------------------------------------+
 echo  ^|        VIDEO + AUDIO CHANNEL  (Separate Files^)       ^|
-echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Channel            ^|
+echo  ^|  Step 1/8  ^|  URL Input  ^|  Mode: Channel            ^|
 echo  +------------------------------------------------------+
 echo.
 echo   Tab scope : !_CH_TAB_LABEL!
 ) else if /i "!_DL_MODE!"=="playlist" (
 echo  +------------------------------------------------------+
 echo  ^|       VIDEO + AUDIO PLAYLIST  (Separate Files^)      ^|
-echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Playlist           ^|
+echo  ^|  Step 1/8  ^|  URL Input  ^|  Mode: Playlist           ^|
 echo  +------------------------------------------------------+
 ) else (
 echo  +------------------------------------------------------+
 echo  ^|          SEPARATE VIDEO + AUDIO DOWNLOAD             ^|
-echo  ^|  Step 1/5  ^|  URL Input  ^|  Mode: Single video       ^|
+echo  ^|  Step 1/8  ^|  URL Input  ^|  Mode: Single video       ^|
 echo  +------------------------------------------------------+
 )
 echo.
@@ -1837,7 +1840,7 @@ goto DS_URL_LOOP
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|           [Step 2/5]  Video Resolution               ^|
+echo  ^|           [Step 2/8]  Video Resolution               ^|
 echo  +------------------------------------------------------+
 echo.
 echo   [1]  Best Available  (recommended)
@@ -1875,11 +1878,51 @@ if "!RESOLUTION!"=="" (
 )
 
 
+:DS_VID_FMT
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|        [Step 3/8]  Video Output Format               ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Container for the separate VIDEO file (remuxed, no re-encode).
+echo.
+echo   [1]  mp4    (recommended, universal)
+echo   [2]  mkv    (high quality container)
+echo   [3]  webm   (open format)
+echo   [4]  mov    (Apple QuickTime)
+echo   [5]  avi    (legacy, wide compat)
+echo   [6]  flv    (Flash Video)
+echo   [7]  Original  (keep source container, no remux)
+echo   [B]  Back
+echo.
+set "DS_VID_FORMAT="
+set "DS_VID_REMUX="
+set "DS_VFMT_CHOICE="
+set /p "DS_VFMT_CHOICE=  Choose video format [1-7, default=1]: "
+if /i "!DS_VFMT_CHOICE!"=="B" goto DS_RES
+if "!DS_VFMT_CHOICE!"=="" set "DS_VFMT_CHOICE=1"
+if "!DS_VFMT_CHOICE!"=="1" set "DS_VID_FORMAT=mp4"
+if "!DS_VFMT_CHOICE!"=="2" set "DS_VID_FORMAT=mkv"
+if "!DS_VFMT_CHOICE!"=="3" set "DS_VID_FORMAT=webm"
+if "!DS_VFMT_CHOICE!"=="4" set "DS_VID_FORMAT=mov"
+if "!DS_VFMT_CHOICE!"=="5" set "DS_VID_FORMAT=avi"
+if "!DS_VFMT_CHOICE!"=="6" set "DS_VID_FORMAT=flv"
+if "!DS_VFMT_CHOICE!"=="7" set "DS_VID_FORMAT=Original"
+if "!DS_VID_FORMAT!"=="" (
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DS_VID_FMT
+)
+:: Only remux when a specific container was chosen (not "Original")
+if /i not "!DS_VID_FORMAT!"=="Original" set "DS_VID_REMUX=--remux-video !DS_VID_FORMAT!"
+
+
 :DS_AUD_FMT
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|        [Step 3/5]  Audio Format (separate file)      ^|
+echo  ^|        [Step 4/8]  Audio Format (separate file)      ^|
 echo  +------------------------------------------------------+
 echo.
 echo   [1]  mp3     (most compatible)
@@ -1895,7 +1938,7 @@ echo.
 set "AUD_FORMAT="
 set "AUD_CHOICE="
 set /p "AUD_CHOICE=  Choose audio format [1-8, default=1]: "
-if /i "!AUD_CHOICE!"=="B" goto DS_RES
+if /i "!AUD_CHOICE!"=="B" goto DS_VID_FMT
 if "!AUD_CHOICE!"=="" set "AUD_CHOICE=1"
 if "!AUD_CHOICE!"=="1" set "AUD_FORMAT=mp3"
 if "!AUD_CHOICE!"=="2" set "AUD_FORMAT=aac"
@@ -1912,11 +1955,83 @@ if "!AUD_FORMAT!"=="" (
 )
 
 
+:DS_AUD_QUAL
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|             [Step 5/8]  Audio Quality                ^|
+echo  +------------------------------------------------------+
+echo.
+echo   [1]  Best   (VBR 0  - highest quality)
+echo   [2]  High   (VBR 2)
+echo   [3]  Medium (VBR 5)
+echo   [4]  Low    (VBR 9  - smallest file)
+echo   [5]  320K   (constant bitrate)
+echo   [6]  256K   (constant bitrate)
+echo   [7]  192K   (constant bitrate)
+echo   [8]  128K   (constant bitrate)
+echo   [B]  Back
+echo.
+set "AUD_QUALITY="
+set "QUAL_CHOICE="
+set /p "QUAL_CHOICE=  Choose quality [1-8, default=1]: "
+if /i "!QUAL_CHOICE!"=="B" goto DS_AUD_FMT
+if "!QUAL_CHOICE!"=="" set "QUAL_CHOICE=1"
+if "!QUAL_CHOICE!"=="1" set "AUD_QUALITY=0"
+if "!QUAL_CHOICE!"=="2" set "AUD_QUALITY=2"
+if "!QUAL_CHOICE!"=="3" set "AUD_QUALITY=5"
+if "!QUAL_CHOICE!"=="4" set "AUD_QUALITY=9"
+if "!QUAL_CHOICE!"=="5" set "AUD_QUALITY=320K"
+if "!QUAL_CHOICE!"=="6" set "AUD_QUALITY=256K"
+if "!QUAL_CHOICE!"=="7" set "AUD_QUALITY=192K"
+if "!QUAL_CHOICE!"=="8" set "AUD_QUALITY=128K"
+if "!AUD_QUALITY!"=="" (
+    echo   [^^!] Invalid choice. Please try again.
+    timeout /t 1 >nul
+    goto DS_AUD_QUAL
+)
+
+
+:DS_SUBS
+cls
+echo.
+echo  +------------------------------------------------------+
+echo  ^|              [Step 6/8]  Subtitles                   ^|
+echo  +------------------------------------------------------+
+echo.
+echo   Saved as a separate .srt file alongside the video.
+echo.
+echo   [1]  No subtitles  (default)
+echo   [2]  Auto-generated subtitles  (e.g. YouTube auto-captions)
+echo   [B]  Back
+echo.
+set "SUB_OPTS="
+set "SUB_LABEL=None"
+set "SUB_CHOICE="
+set /p "SUB_CHOICE=  Choose subtitle option [1-2, default=1]: "
+if /i "!SUB_CHOICE!"=="B" goto DS_AUD_QUAL
+if "!SUB_CHOICE!"=="" set "SUB_CHOICE=1"
+if "!SUB_CHOICE!"=="1" goto DS_OUT
+if "!SUB_CHOICE!"=="2" (
+    echo.
+    echo   Language codes: en  id  ja  es  ko  zh  etc.
+    set "SUB_LANG_IN="
+    set /p "SUB_LANG_IN=  Subtitle language [default=en]: "
+    if "!SUB_LANG_IN!"=="" set "SUB_LANG_IN=en"
+    set "SUB_OPTS=--write-auto-subs --sub-langs !SUB_LANG_IN! --convert-subs srt"
+    set "SUB_LABEL=Auto-generated [!SUB_LANG_IN!]"
+    goto DS_OUT
+)
+echo   [^^!] Invalid choice. Please try again.
+timeout /t 1 >nul
+goto DS_SUBS
+
+
 :DS_OUT
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|             [Step 4/5]  Output Path                  ^|
+echo  ^|             [Step 7/8]  Output Path                  ^|
 echo  +------------------------------------------------------+
 echo.
 echo   Default: !DEFAULT_OUTPUT!
@@ -1926,7 +2041,7 @@ echo.
 set "CUSTOM_PATH="
 set "BASE_OUTPUT_PATH="
 set /p "CUSTOM_PATH=  Output path: "
-if /i "!CUSTOM_PATH!"=="B" goto DS_AUD_FMT
+if /i "!CUSTOM_PATH!"=="B" goto DS_SUBS
 if "!CUSTOM_PATH!"=="" (
     set "BASE_OUTPUT_PATH=!DEFAULT_OUTPUT!"
 ) else (
@@ -1993,12 +2108,15 @@ if /i "!_DL_MODE!"=="channel" (
 cls
 echo.
 echo  +------------------------------------------------------+
-echo  ^|             [Step 5/5]  Download Summary             ^|
+echo  ^|             [Step 8/8]  Download Summary             ^|
 echo  +------------------------------------------------------+
 echo.
 echo   URLs          : !URL_COUNT! URL(s^) queued
 echo   Video Quality : !RESOLUTION!
+echo   Video Format  : !DS_VID_FORMAT!
 echo   Audio Format  : !AUD_FORMAT!
+echo   Audio Quality : !AUD_QUALITY!
+echo   Subtitles     : !SUB_LABEL!
 echo   Playlist      : !PL_LABEL!
 echo   Output        : !OUTPUT_PATH!
 echo   Metadata      : !CFG_METADATA!    Thumbnail: !CFG_THUMBNAIL!
@@ -2038,7 +2156,7 @@ if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
 call :LOG_INIT
-"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -f "!VID_FORMAT_STR!" !DS_VID_REMUX! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
 
 :: Piped output hides yt-dlp's exit code, so judge the video step by
 :: whether anything was recorded as completed (after_move hook).
@@ -2062,14 +2180,14 @@ echo.
 :: For the audio pass we deliberately omit TRACK_OPT - we already tracked
 :: success in the video pass; appending audio successes would double-count
 :: and confuse the failed-items computation.
-"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
 
 :: Status is derived from the tracked video pass (the audio pass has no
 :: tracking hooks); a completed video step counts the URL as done.
 call :DERIVE_STATUS
 set "_DONE_COUNT=!URL_COUNT!"
 set "_DONE_PATH=!OUTPUT_PATH!"
-set "_DONE_MODE=Video+Audio (separate) - !RESOLUTION! + !AUD_FORMAT!"
+set "_DONE_MODE=Video+Audio (separate) - !RESOLUTION! !DS_VID_FORMAT! + !AUD_FORMAT! @ !AUD_QUALITY! / Subs: !SUB_LABEL!"
 set "_DONE_EXTRA=Two files per URL: [VIDEO] and [AUDIO]"
 if !_DL_RC! NEQ 0 (set "_DONE_STATUS=FAIL") else (set "_DONE_STATUS=OK")
 goto POST_DOWNLOAD
