@@ -384,6 +384,26 @@ exit /b 0
 
 
 :: =====================================================
+:: HELPER: DERIVE_STATUS
+::   The live download is piped through a tee (output shown on screen
+::   AND written to the log), so cmd's ERRORLEVEL reflects the tee, not
+::   yt-dlp. We instead derive success from yt-dlp's own tracking files:
+::     ATTEMPTED (before_dl hook)  vs  COMPLETED (after_move hook).
+::   Sets _DL_RC = 0 (OK) when at least one item completed and nothing
+::   is left unfinished, otherwise 1 (fail/partial -> triggers the
+::   failed-items / retry flow in POST_DOWNLOAD).
+:: =====================================================
+:DERIVE_STATUS
+set "_dac=0"
+set "_dcc=0"
+if exist "%ATTEMPTED_TEMP%" for /f "usebackq tokens=*" %%a in ("%ATTEMPTED_TEMP%") do set /a _dac+=1
+if exist "%COMPLETED_TEMP%" for /f "usebackq tokens=*" %%a in ("%COMPLETED_TEMP%") do set /a _dcc+=1
+set "_DL_RC=1"
+if !_dcc! GTR 0 if !_dac! LEQ !_dcc! set "_DL_RC=0"
+exit /b 0
+
+
+:: =====================================================
 :: HELPER: VALIDATE_URL
 :: =====================================================
 :VALIDATE_URL
@@ -1410,9 +1430,9 @@ if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
 call :LOG_INIT
-"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s" >>"%LOG_TMP%" 2>&1
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -f "!FORMAT_STR!" --merge-output-format !VID_FORMAT! !SUB_OPTS! !PL_OPTS! !META_OPT! !CHAP_OPT! !THUMB_OPT! !SB_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
 
-set "_DL_RC=!ERRORLEVEL!"
+call :DERIVE_STATUS
 set "_DONE_COUNT=!URL_COUNT!"
 set "_DONE_PATH=!OUTPUT_PATH!"
 set "_DONE_MODE=Video - !VID_FORMAT!, !RESOLUTION! / Subs: !SUB_LABEL!"
@@ -1711,9 +1731,9 @@ if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
 call :LOG_INIT
-"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s" >>"%LOG_TMP%" 2>&1
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -x --audio-format !AUD_FORMAT! --audio-quality !AUD_QUALITY! !PL_OPTS! !META_OPT! !THUMB_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).200B.%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
 
-set "_DL_RC=!ERRORLEVEL!"
+call :DERIVE_STATUS
 set "_DONE_COUNT=!URL_COUNT!"
 set "_DONE_PATH=!OUTPUT_PATH!"
 set "_DONE_MODE=Audio Only - !AUD_FORMAT! @ !AUD_QUALITY!"
@@ -2018,9 +2038,12 @@ if exist "%ATTEMPTED_TEMP%" del "%ATTEMPTED_TEMP%"
 if exist "%FAILED_TEMP%"    del "%FAILED_TEMP%"
 
 call :LOG_INIT
-"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s" >>"%LOG_TMP%" 2>&1
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -f "!VID_FORMAT_STR!" !PL_OPTS! !META_OPT! !CHAP_OPT! !COOKIE_OPT! !SLEEP_OPT! -N !CFG_FRAGMENTS! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! !TRACK_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [VIDEO].%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
 
-set "_DS_VID_RC=!ERRORLEVEL!"
+:: Piped output hides yt-dlp's exit code, so judge the video step by
+:: whether anything was recorded as completed (after_move hook).
+set "_DS_VID_RC=1"
+if exist "%COMPLETED_TEMP%" for /f "usebackq tokens=*" %%a in ("%COMPLETED_TEMP%") do set "_DS_VID_RC=0"
 if !_DS_VID_RC! NEQ 0 (
     set "_DONE_COUNT=!URL_COUNT!"
     set "_DONE_PATH=!OUTPUT_PATH!"
@@ -2039,14 +2062,16 @@ echo.
 :: For the audio pass we deliberately omit TRACK_OPT - we already tracked
 :: success in the video pass; appending audio successes would double-count
 :: and confuse the failed-items computation.
-"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s" >>"%LOG_TMP%" 2>&1
+"%YTDLP%" --ffmpeg-location "!FFMPEG_DIR!" %COMMON_OPTS% --newline -x --audio-format !AUD_FORMAT! !PL_OPTS! !META_OPT! !COOKIE_OPT! !SLEEP_OPT! -R !CFG_RETRIES! !SPEED_OPT! !SKIP_OPT! !HISTORY_OPT! !ARCHIVE_OPT! -a "%URL_TEMP%" -o "!OUTPUT_PATH!\!OUT_PREFIX!%%(title).180B [AUDIO].%%(ext)s" 2>&1 | powershell -NoProfile -Command "$w=[IO.StreamWriter]::new('%LOG_TMP%',$true);try{while($null -ne ($l=[Console]::In.ReadLine())){[Console]::WriteLine($l);$w.WriteLine($l);$w.Flush()}}finally{$w.Close()}"
 
-set "_DS_AUD_RC=!ERRORLEVEL!"
+:: Status is derived from the tracked video pass (the audio pass has no
+:: tracking hooks); a completed video step counts the URL as done.
+call :DERIVE_STATUS
 set "_DONE_COUNT=!URL_COUNT!"
 set "_DONE_PATH=!OUTPUT_PATH!"
 set "_DONE_MODE=Video+Audio (separate) - !RESOLUTION! + !AUD_FORMAT!"
 set "_DONE_EXTRA=Two files per URL: [VIDEO] and [AUDIO]"
-if !_DS_AUD_RC! NEQ 0 (set "_DONE_STATUS=FAIL") else (set "_DONE_STATUS=OK")
+if !_DL_RC! NEQ 0 (set "_DONE_STATUS=FAIL") else (set "_DONE_STATUS=OK")
 goto POST_DOWNLOAD
 
 
