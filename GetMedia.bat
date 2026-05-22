@@ -308,6 +308,10 @@ exit /b 0
 >>"%LOG_TMP%" echo Target  : !_DONE_RETRY_TARGET!
 >>"%LOG_TMP%" echo Output  : !OUTPUT_PATH!
 >>"%LOG_TMP%" echo Cookies : !CFG_COOKIES_LABEL!
+if defined RESOLUTION    >>"%LOG_TMP%" echo Quality : !RESOLUTION!
+if defined FORMAT_STR     >>"%LOG_TMP%" echo Format  : -f !FORMAT_STR!
+if defined VID_FORMAT_STR >>"%LOG_TMP%" echo Format  : -f !VID_FORMAT_STR! (video stream)
+if defined AUD_FORMAT     >>"%LOG_TMP%" echo Audio   : !AUD_FORMAT!
 >>"%LOG_TMP%" echo.
 >>"%LOG_TMP%" echo ------ URLs queued ------
 type "%URL_TEMP%" >>"%LOG_TMP%" 2>nul
@@ -935,6 +939,12 @@ set /p "MAIN_CHOICE=  Choose an option: "
 
 set "_DL_MODE=single"
 set "_CH_TAB="
+:: Clear previous selection vars so a later run's log doesn't show stale values
+set "FORMAT_STR="
+set "VID_FORMAT_STR="
+set "RESOLUTION="
+set "AUD_FORMAT="
+set "AUD_QUALITY="
 if "!MAIN_CHOICE!"=="1" goto DV_URL
 if "!MAIN_CHOICE!"=="2" goto DA_URL
 if "!MAIN_CHOICE!"=="3" goto DS_URL
@@ -1172,13 +1182,16 @@ if /i "!RES_CHOICE!"=="B" (
     goto DV_URL
 )
 if "!RES_CHOICE!"==""  set "RES_CHOICE=1"
+:: Each capped tier ends with "/bv*+ba/b" so that, if a video has no
+:: stream at that height, yt-dlp falls back to the best available
+:: instead of hard-failing with "Requested format is not available".
 if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "FORMAT_STR=bv*+ba/b")
-if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "FORMAT_STR=bv*[height<=2160]+ba/b[height<=2160]")
-if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "FORMAT_STR=bv*[height<=1440]+ba/b[height<=1440]")
-if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "FORMAT_STR=bv*[height<=1080]+ba/b[height<=1080]")
-if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "FORMAT_STR=bv*[height<=720]+ba/b[height<=720]")
-if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "FORMAT_STR=bv*[height<=480]+ba/b[height<=480]")
-if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "FORMAT_STR=bv*[height<=360]+ba/b[height<=360]")
+if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "FORMAT_STR=bv*[height<=2160]+ba/b[height<=2160]/bv*+ba/b")
+if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "FORMAT_STR=bv*[height<=1440]+ba/b[height<=1440]/bv*+ba/b")
+if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "FORMAT_STR=bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b")
+if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "FORMAT_STR=bv*[height<=720]+ba/b[height<=720]/bv*+ba/b")
+if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "FORMAT_STR=bv*[height<=480]+ba/b[height<=480]/bv*+ba/b")
+if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "FORMAT_STR=bv*[height<=360]+ba/b[height<=360]/bv*+ba/b")
 if "!RESOLUTION!"=="" (
     echo   [^^!] Invalid choice. Defaulting to Best Available.
     set "RESOLUTION=Best Available"
@@ -1825,13 +1838,16 @@ if /i "!RES_CHOICE!"=="B" (
     goto DS_URL
 )
 if "!RES_CHOICE!"=="" set "RES_CHOICE=1"
-if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "VID_FORMAT_STR=bv")
-if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "VID_FORMAT_STR=bv[height<=2160]")
-if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "VID_FORMAT_STR=bv[height<=1440]")
-if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "VID_FORMAT_STR=bv[height<=1080]")
-if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "VID_FORMAT_STR=bv[height<=720]")
-if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "VID_FORMAT_STR=bv[height<=480]")
-if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "VID_FORMAT_STR=bv[height<=360]")
+:: bv*=best video (incl. muxed) is used as a fallback after bv (video-only)
+:: so a video without a separate video-only stream still resolves instead
+:: of failing with "Requested format is not available".
+if "!RES_CHOICE!"=="1" (set "RESOLUTION=Best Available" & set "VID_FORMAT_STR=bv/bv*")
+if "!RES_CHOICE!"=="2" (set "RESOLUTION=4K (2160p)"     & set "VID_FORMAT_STR=bv[height<=2160]/bv*[height<=2160]/bv/bv*")
+if "!RES_CHOICE!"=="3" (set "RESOLUTION=1440p"          & set "VID_FORMAT_STR=bv[height<=1440]/bv*[height<=1440]/bv/bv*")
+if "!RES_CHOICE!"=="4" (set "RESOLUTION=1080p"          & set "VID_FORMAT_STR=bv[height<=1080]/bv*[height<=1080]/bv/bv*")
+if "!RES_CHOICE!"=="5" (set "RESOLUTION=720p"           & set "VID_FORMAT_STR=bv[height<=720]/bv*[height<=720]/bv/bv*")
+if "!RES_CHOICE!"=="6" (set "RESOLUTION=480p"           & set "VID_FORMAT_STR=bv[height<=480]/bv*[height<=480]/bv/bv*")
+if "!RES_CHOICE!"=="7" (set "RESOLUTION=360p"           & set "VID_FORMAT_STR=bv[height<=360]/bv*[height<=360]/bv/bv*")
 if "!RESOLUTION!"=="" (
     echo   [^^!] Invalid choice. Please try again.
     timeout /t 1 >nul
