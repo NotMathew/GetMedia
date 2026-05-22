@@ -45,7 +45,7 @@ Supports nearly every platform supported by yt-dlp, including:
 - SoundCloud
 - Vimeo
 - Facebook
-- And many more
+- And many [more](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 
 ---
 
